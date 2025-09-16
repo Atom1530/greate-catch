@@ -1,12 +1,12 @@
 {
-  "name": "goit-js-hw-12",
+  "name": "greate-catch",
   "private": true,
   "version": "1.0.0",
   "type": "module",
   "scripts": {
     "start": "git add --all && git commit -m \"original push\" && git push",
     "dev": "vite",
-    "build": "vite build --base=/goit-js-hw-12/",
+    "build": "vite build --base=/greate-catch/",
     "preview": "vite preview"
   },
   "devDependencies": {
