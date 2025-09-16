@@ -9,12 +9,12 @@ export default defineConfig(({ command }) => {
     define: {
       [command === 'serve' ? 'global' : '_global']: {},
     },
-    root: 'src',
+
     base: '/greate-catch/',
     build: {
       sourcemap: true,
       rollupOptions: {
-        input: glob.sync('./src/*.html'),
+        input: glob.sync('./*.html'),
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {
@@ -40,7 +40,7 @@ export default defineConfig(({ command }) => {
     },
     plugins: [
       injectHTML(),
-      FullReload(['./src/**.html']),
+      FullReload(['./src/**/**.html']),
       SortCss({
         sort: 'mobile-first',
       }),
