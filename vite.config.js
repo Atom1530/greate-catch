@@ -10,7 +10,7 @@ export default defineConfig(({ command }) => {
       [command === 'serve' ? 'global' : '_global']: {},
     },
     root: 'src',
-    base: '/goit-js-hw-12/',
+    base: '/greate-catch/',
     build: {
       sourcemap: true,
       rollupOptions: {
