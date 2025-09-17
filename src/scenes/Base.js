@@ -3,7 +3,7 @@ import MarketModal from '../ui/MarketModal.js';
 import ShopModal from '../ui/ShopModal.js';
 import { VM as vm } from '../vm.js';
 import { onWalletChange } from '../quests/QuestHooks.js'; // у тебя экспорт по умолчанию тоже есть — импортуй как в проекте принято
-
+import Phaser from 'phaser';
 import { WalletBadge } from '../ui/WalletBadge.js';
 
 

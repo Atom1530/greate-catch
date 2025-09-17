@@ -7,7 +7,7 @@
     "start": "git add --all && git commit -m \"original push\" && git push",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview --port 4173 --open /greate-catch/"
   },
   "devDependencies": {
     "glob": "^11.0.0",

@@ -1,38 +1,21 @@
+// vite.config.js (index.html у тебя в src)
 import { defineConfig } from 'vite';
-import { glob } from 'glob';
 import injectHTML from 'vite-plugin-html-inject';
 import FullReload from 'vite-plugin-full-reload';
 import sortMediaQueries from 'postcss-sort-media-queries';
 
-export default defineConfig(() => ({
+export default defineConfig(({ command }) => ({
   root: 'src',
-  // проверь слаг репозитория и поправь строку ниже при необходимости
-  base: '/greate-catch/',
-  define: { global: {} }, // чтобы не ловить "global is not defined"
+  base: command === 'build' ? '/greate-catch/' : '/', // имя репо — точно!
+  define: { global: {} },
   build: {
-    sourcemap: true,
-    outDir: '../dist',
+    outDir: '../docs',
     emptyOutDir: true,
-    rollupOptions: {
-      input: glob.sync('./src/*.html'),
-      output: {
-        manualChunks(id) {
-          if (id.includes('node_modules')) return 'vendor';
-        },
-        entryFileNames: chunk =>
-          chunk.name === 'commonHelpers' ? 'commonHelpers.js' : '[name].js',
-        assetFileNames: info =>
-          info.name?.endsWith('.html') ? '[name][extname]' : 'assets/[name]-[hash][extname]',
-      },
-    },
+    // НИКАКИХ кастомных entryFileNames/assetFileNames — пусть Vite сам вставит пути
   },
   plugins: [
     injectHTML(),
-    FullReload(['src/**/*.html']),
+    FullReload(['./**/*.html']),
   ],
-  css: {
-    postcss: {
-      plugins: [sortMediaQueries({ sort: 'mobile-first' })],
-    },
-  },
+  css: { postcss: { plugins: [sortMediaQueries({ sort: 'mobile-first' })] } },
 }));

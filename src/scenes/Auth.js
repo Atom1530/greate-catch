@@ -1,5 +1,5 @@
 //  /src/scenes/Auth.js
-
+import Phaser from 'phaser';
 import { API, Auth } from '../net/api.js';
 
 export default class AuthScene extends Phaser.Scene {
