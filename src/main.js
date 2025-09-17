@@ -1,122 +1,46 @@
-import iziToast from 'izitoast';
-import 'izitoast/dist/css/iziToast.min.css';
-import { getImagesByQuery, PER_PAGE } from './js/pixabay-api.js';
-import {
-  createGallery,
-  clearGallery,
-  showLoader,
-  hideLoader,
-  hideLoadMoreButton,
-  showLoadMoreButton,
-} from './js/render-functions.js';
+// src/main.js
+import { Auth } from './net/api.js';
+import VM from './vm.js';
+import { Start } from './scenes/Start.js';
+import Base from './scenes/Base.js';
+import AuthScene from './scenes/Auth.js';
 
-const form = document.querySelector('form');
-const submitBtn = form.querySelector('button[type="submit"]');
-const moreBtn = document.querySelector('#moreBtn');
+(async () => {
+  // 1) узнаём юзера (подтягиваем токен из LS)
+  try { await Auth.ensure(); } catch {}
 
-let query = '';
-let currentPage = 1;
+  const uid = Auth?.user?.id || 'guest';
 
+  // 2) один раз на весь ран: правильный ключ для этого юзера
+  VM.init({ persist: true, key: `rf.vm.u:${uid}` });
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-
-  query = new FormData(e.target).get('searchText').trim();
-  currentPage = 1;                
-  hideLoadMoreButton();          
-
-  if (!query) {
-    iziToast.error({
-      position: 'center',
-      title: 'Помилка',
-      message: 'Ви нічого не ввели!',
-    });
-    return;
+  // (опционально) если только что залогинились — мигрируй гостевой сейв:
+  if (uid !== 'guest') {
+    const guestKey = 'rf.vm.u:guest';
+    if (!localStorage.getItem(`rf.vm.u:${uid}`) && localStorage.getItem(guestKey)) {
+      localStorage.setItem(`rf.vm.u:${uid}`, localStorage.getItem(guestKey));
+    }
   }
 
-  const oldText = submitBtn.textContent;
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Searching…';
+  console.log('[BOOT] VM key =', VM._lsKey,
+              'raw =', localStorage.getItem(VM._lsKey)); // дебаг: видно, что реально лежит в LS
 
-  clearGallery();
-  showLoader();
+  const config = {
+  type: Phaser.AUTO,
+  title: 'Overlord Rising',
+  description: '',
+  parent: 'game-container',      // <div id="game-container"></div> в index.html
+  width: 1280,
+  height: 720,
+  backgroundColor: '#000000',
+  pixelArt: false,
+  scene: [Start, Base, AuthScene], // порядок не критичен, главное — чтобы сцена была зарегистрирована
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
+  dom: { createContainer: true }, // <<< ВКЛЮЧАЕМ DOM, иначе this.add.dom кинет ошибку
+};
 
-  try {
-    const  data  = await getImagesByQuery(query, currentPage);
-    const { hits, total } = data;
-
-    console.log(`totalHits: ${total}`);
-
-    if (hits.length === 0) {
-      iziToast.warning({
-        position: 'center',
-        title: 'Немає результатів',
-        message: 'Нічого не знайдено.',
-      });
-      hideLoadMoreButton();
-      return;
-    }
-
-    createGallery(hits);
-
-
-    if (currentPage * PER_PAGE < total) {
-      showLoadMoreButton();
-    } else {
-      hideLoadMoreButton();
-      iziToast.info({
-    position: 'bottomCenter',
-    title: 'Кінець',
-    message: "Більше немає результатів.",
-  });
-    }
-  } catch (err) {
-    console.log(err);
-    iziToast.error({
-      position: 'center',
-      title: err?.message || 'Помилка запиту',
-      message: 'Спробуйте ще раз пізніше.',
-    });
-  } finally {
-    hideLoader();
-    submitBtn.disabled = false;
-    submitBtn.textContent = oldText;
-    e.target.reset();
-  }
-});
-
-moreBtn.addEventListener('click', async () => {
-  moreBtn.disabled = true;
-  currentPage += 1;
-
-  showLoader();
-  try {
-    const data  = await getImagesByQuery(query, currentPage);
-    createGallery(data.hits);
- 
-
-    const { height: cardHeight } = document
-    .querySelector('.gallery')
-     .firstElementChild.getBoundingClientRect();
-
-    window.scrollBy({
-     top: cardHeight * 2,
-     behavior: 'smooth',
-     });
-
-
-    if (currentPage * PER_PAGE >= data.total) {
-      hideLoadMoreButton();
-      iziToast.info({
-    position: 'bottomCenter',
-    title: 'Кінець',
-    message: "Це всі результати за запитом.",
-  });
-    }
-  } catch (err) {
-    console.log(err);
-  } finally {
-    hideLoader();
-    moreBtn.disabled = false;
-  }
-});
+  new Phaser.Game(config);
+})();

@@ -2,48 +2,37 @@ import { defineConfig } from 'vite';
 import { glob } from 'glob';
 import injectHTML from 'vite-plugin-html-inject';
 import FullReload from 'vite-plugin-full-reload';
-import SortCss from 'postcss-sort-media-queries';
+import sortMediaQueries from 'postcss-sort-media-queries';
 
-export default defineConfig(({ command }) => {
-  return {
-    define: {
-      [command === 'serve' ? 'global' : '_global']: {},
-    },
-
-    base: '/greate-catch/',
-    build: {
-      sourcemap: true,
-      rollupOptions: {
-        input: glob.sync('./*.html'),
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              return 'vendor';
-            }
-          },
-          entryFileNames: chunkInfo => {
-            if (chunkInfo.name === 'commonHelpers') {
-              return 'commonHelpers.js';
-            }
-            return '[name].js';
-          },
-          assetFileNames: assetInfo => {
-            if (assetInfo.name && assetInfo.name.endsWith('.html')) {
-              return '[name].[ext]';
-            }
-            return 'assets/[name]-[hash][extname]';
-          },
+export default defineConfig(() => ({
+  root: 'src',
+  // проверь слаг репозитория и поправь строку ниже при необходимости
+  base: '/greate-catch/',
+  define: { global: {} }, // чтобы не ловить "global is not defined"
+  build: {
+    sourcemap: true,
+    outDir: '../dist',
+    emptyOutDir: true,
+    rollupOptions: {
+      input: glob.sync('./src/*.html'),
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) return 'vendor';
         },
+        entryFileNames: chunk =>
+          chunk.name === 'commonHelpers' ? 'commonHelpers.js' : '[name].js',
+        assetFileNames: info =>
+          info.name?.endsWith('.html') ? '[name][extname]' : 'assets/[name]-[hash][extname]',
       },
-      outDir: '../dist',
-      emptyOutDir: true,
     },
-    plugins: [
-      injectHTML(),
-      FullReload(['./src/**/**.html']),
-      SortCss({
-        sort: 'mobile-first',
-      }),
-    ],
-  };
-});
+  },
+  plugins: [
+    injectHTML(),
+    FullReload(['src/**/*.html']),
+  ],
+  css: {
+    postcss: {
+      plugins: [sortMediaQueries({ sort: 'mobile-first' })],
+    },
+  },
+}));
