@@ -1,6 +1,7 @@
 // src/ui/ActionDock.js
 import UI from './theme.js';
-import { openMapModal } from './MapModal.js';
+import  openMapModal from './MapModal.js';
+import { LOCATIONS } from '../data/locations.js'; // чтобы собрать список и онлайн
 
 export class ActionDock {
   /**
@@ -34,9 +35,41 @@ export class ActionDock {
 
     // --- кнопки
     this.btnBase = this._makeTextBtn('🏠  База', () => this.onBase?.());
-    this.btnExp  = this._makeTextBtn('🗺️  Экспедиция', () => {
-      openMapModal(this.s, (locId) => this.onLocationPick?.(locId));
-    });
+     this.btnExp  = this._makeTextBtn('🗺️  Экспедиция', () => {
+   const curId = this.s.locationMgr?.getCurrentId?.() || this.s.locId || 'lake';
+   const room  = this.s.room;
+
+   const makeItems = () =>
+     LOCATIONS.map(l => {
+       const info = room?.getRoomInfo?.(l.id) || { occupants:0, capacity:100 };
+       // тут можно воткнуть свою логику анлока
+       const unlocked = true;
+       return {
+         id: l.id,
+         title: l.title,
+         locked: !unlocked,
+         lockReason: unlocked ? '' : 'Откроется с 5 уровня',
+         occupants: info.occupants|0,
+         capacity:  info.capacity|0,
+       };
+     });
+
+   const modal = openMapModal(this.s, {
+     currentId: curId,
+     items: makeItems(),
+     onPick: async (locId) => {
+       // просто пробрасываем наружу — там Start/TopHUD делает
+       // переход сцены, загрузку ассетов и смену комнаты
+       await this.onLocationPick?.(locId);
+     }
+   });
+
+   // live-онлайн
+   this._unsubMapInfo?.();
+   this._unsubMapInfo = room?.client?.on?.('roomInfo', () => {
+    modal.update(makeItems());
+   });
+ });
 
     // --- мини-кошелёк (компактные «чипы» без подписей)
     const w = wallet || { coins: 0, gold: 0, perks: 0 };

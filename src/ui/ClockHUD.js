@@ -30,30 +30,46 @@ export class ClockHUD {
 
     this.lastClock=''; this.lastPhase=null; this.w=180; this.h=40;
     this._applyStyle('day'); this._layout(); this.update(true);
-    scene.scale.on('resize', () => this._redrawPanel());
+
+    // сохраняем ссылку, чтобы потом отписаться
+    this._onResize = () => this._redrawPanel();
+    scene.scale.on('resize', this._onResize);
+
+    // авто-чистка при закрытии сцены
+    scene.events.once('shutdown', () => {
+      try { scene.scale.off('resize', this._onResize); } catch {}
+      this.destroy();
+    });
   }
 
-  destroy(){ this.gPanel?.destroy(); this.gRing?.destroy(); this.icon?.destroy(); this.timeTxt?.destroy(); this.subTxt?.destroy(); this.root?.destroy(); }
+  destroy(){
+    this.gPanel?.destroy(); this.gRing?.destroy();
+    this.icon?.destroy(); this.timeTxt?.destroy(); this.subTxt?.destroy();
+    this.root?.destroy();
+  }
   setPosition(x,y){ this.root.setPosition(Math.round(x), Math.round(y)); }
   getBounds(){ return new Phaser.Geom.Rectangle(this.root.x - this.w/2, this.root.y - this.h/2, this.w, this.h); }
 
   _applyStyle(phase){
     const C = this.colors[phase] || this.colors.day;
     this.curStyle = C;
-    this.icon.setText(C.icon);
-    this.timeTxt.setColor(C.time);
-    this.subTxt.setColor(C.sub);
-    this.subTxt.setText(C.label);
+    this.icon?.setText(C.icon);
+    this.timeTxt?.setColor(C.time);
+    this.subTxt?.setColor(C.sub);
+    this.subTxt?.setText(C.label);
     this._redrawPanel();
   }
   _redrawPanel(){
+    const g = this.gPanel;
+    if (!g || !g.scene) return; // графика уже уничтожена
     const C = this.curStyle || this.colors.day;
-    const g = this.gPanel; g.clear();
+    g.clear();
     g.fillStyle(C.panel, 1); g.lineStyle(2, C.stroke, C.strokeA);
     g.fillRoundedRect(-this.w/2, -this.h/2, this.w, this.h, 14);
     g.strokeRoundedRect(-this.w/2, -this.h/2, this.w, this.h, 14);
   }
   _layout(){
+    if (!this.icon || !this.timeTxt || !this.subTxt) return;
     const ringSize = (this.ringR + this.ringTh) * 2;
     let x = -this.w/2 + this.padX;
     this.ringX = x + this.ringR + this.ringTh; this.ringY = 0; x += ringSize + 8;
@@ -67,19 +83,43 @@ export class ClockHUD {
     this._redrawPanel();
   }
   _drawRing(pct){
+    const g = this.gRing;
+    if (!g || !g.scene) return;
     const C = this.curStyle || this.colors.day;
-    const g = this.gRing; g.clear();
+    g.clear();
     g.lineStyle(this.ringTh, 0xffffff, 0.15);
     g.beginPath(); g.arc(this.ringX, this.ringY, this.ringR, -Math.PI/2, -Math.PI/2 + Math.PI*2, false); g.strokePath();
     const end = -Math.PI/2 + Math.PI*2 * Phaser.Math.Clamp(pct, 0, 1);
     g.lineStyle(this.ringTh, C.ring, 1);
     g.beginPath(); g.arc(this.ringX, this.ringY, this.ringR, -Math.PI/2, end, false); g.strokePath();
   }
+
+  // ——— безопасный апдейт, который не трогает текст без валидной текстуры ———
   update(force=false){
+    // сцена ещё активна?
+    if (!this.s || !this.s.sys || !this.s.sys.isActive()) return;
+
     if (!this.tc?.getInfo) return;
     const info = this.tc.getInfo(); // { clock, phase, pct24, ... }
-    if (force || info.clock !== this.lastClock){ this.lastClock = info.clock; this.timeTxt.setText(info.clock); this._layout(); }
-    if (force || info.phase !== this.lastPhase){ this.lastPhase = info.phase; this._applyStyle(info.phase); }
+
+    const t = this.timeTxt;
+    // у Phaser.Text должна быть CanvasTexture + валидный frame.source.image
+    const canTouchText =
+      t && t.active && !t.destroyed &&
+      t.texture && t.texture.canvas &&
+      t.frame && t.frame.source && t.frame.source.image;
+
+    if (canTouchText && (force || info.clock !== this.lastClock)){
+      this.lastClock = info.clock;
+      t.setText(info.clock);
+      this._layout();
+    }
+
+    if (force || info.phase !== this.lastPhase){
+      this.lastPhase = info.phase;
+      this._applyStyle(info.phase);
+    }
+
     this._drawRing(info.pct24);
   }
 }

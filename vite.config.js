@@ -9,7 +9,7 @@ export default defineConfig(({ command }) => ({
   base: command === 'build' ? '/greate-catch/' : '/', // имя репо — точно!
   define: { global: {} },
   build: {
-    outDir: '../docs',
+    outDir: '../dist',
     emptyOutDir: true,
     // НИКАКИХ кастомных entryFileNames/assetFileNames — пусть Vite сам вставит пути
   },

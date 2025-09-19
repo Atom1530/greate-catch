@@ -21,24 +21,30 @@ export class MapButton {
       fontFamily:'Arial, sans-serif', fontSize:'18px', color:'#e8f1ff'
     }).setOrigin(0,0.5);
 
-    const hit = scene.add.rectangle(0,0,this.w,this.h,0x000000,0.001).setInteractive({ useHandCursor:true });
+    const hit = scene.add.rectangle(0,0,this.w,this.h,0x000000,0.001)
+      .setInteractive({ useHandCursor:true });
 
-    hit.on('pointerover', () => bg.clear()
-      .fillStyle(0x212a3c, 1).fillRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius)
-      .lineStyle(2, 0xffffff, 0.22).strokeRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius)
-    );
-    hit.on('pointerout',  () => bg.clear()
-      .fillStyle(0x1a2233, 1).fillRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius)
-      .lineStyle(2, 0xffffff, 0.18).strokeRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius)
-    );
+    hit.on('pointerover', () => {
+      bg.clear()
+        .fillStyle(0x212a3c, 1).fillRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius)
+        .lineStyle(2, 0xffffff, 0.22).strokeRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius);
+    });
+    hit.on('pointerout', () => {
+      bg.clear()
+        .fillStyle(0x1a2233, 1).fillRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius)
+        .lineStyle(2, 0xffffff, 0.18).strokeRoundedRect(-this.w/2, -this.h/2, this.w, this.h, UI.radius);
+    });
     hit.on('pointerdown', () => onClick?.());
 
+    this._bg = bg;
+    this._label = label;
     this.c.add([bg, icon, label, hit]);
   }
 
+  setText(t){ this._label?.setText(String(t||'')); }
   setPosition(x,y){ this.x=x|0; this.y=y|0; this.c.setPosition(this.x,this.y); }
   setDepth(d){ this.c.setDepth(d); }
-  getBounds(){ return new Phaser.Geom.Rectangle(this.x - this.w/2, this.y - this.h/2, this.w, this.h); }
+  setVisible(v){ this.c.setVisible(!!v); }
   destroy(){ this.c.destroy(); }
 }
 

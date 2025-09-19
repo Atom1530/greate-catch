@@ -1,40 +1,28 @@
-// src/assets/PhotoBank.js
 // ЕДИНЫЙ фотобанк: рыба (src/assets/fish/*.png) и лут/мусор (src/assets/pick/*.png)
-
+import Phaser from "phaser";
 import { SPAWN_TABLES } from '../data/spawnTables.js';
 import { FishCatalog } from '../data/fish.js';
 import { LootCatalog } from '../data/loot.js';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Утилиты каталога
-// ─────────────────────────────────────────────────────────────────────────────
+// ——— собрать массив id из каталога (поддерживаем и Array, и {items:[]}) ———
 function _toIdArray(cat) {
-  const arr = Array.isArray(cat?.items) ? cat.items : (Array.isArray(cat) ? cat : []);
+  const arr = Array.isArray(cat?.items) ? cat.items
+            : (Array.isArray(cat) ? cat : []);
   return arr.map(x => x?.id).filter(Boolean);
 }
+
 const FISH_IDS = new Set(_toIdArray(FishCatalog));
 const PICK_IDS = new Set(_toIdArray(LootCatalog));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Подхватываем все изображения заранее (Vite добавит их в бандл и вернёт URL)
-// КЛЮЧ ВАЖЕН: шаблоны путей должны быть ЛИТЕРАЛАМИ
-// ─────────────────────────────────────────────────────────────────────────────
-const fishFiles = import.meta.glob('./fish/*.png', { eager: true, import: 'default' });
-const pickFiles = import.meta.glob('./pick/*.png', { eager: true, import: 'default' });
+// Базовые папки через import.meta.url → стабильный абсолютный URL и в dev, и в build
+const ROOT_URL = new URL('./', import.meta.url);
+const BASE_URL = {
+  fish: new URL('fish/', ROOT_URL),
+  pick: new URL('pick/', ROOT_URL),
+};
 
-function _toNameUrlMap(obj) {
-  const m = new Map();
-  for (const [path, url] of Object.entries(obj)) {
-    const lastSlash = path.lastIndexOf('/') + 1;
-    const name = path.slice(lastSlash, -4); // имя файла без .png
-    m.set(name, url);
-  }
-  return m;
-}
-const FISH_URL = _toNameUrlMap(fishFiles);
-const PICK_URL = _toNameUrlMap(pickFiles);
-
-// Если нужно сопоставить id и другое имя файла — заполни ALIAS
+// Алиасы по умолчанию ПУСТЫЕ — используем ровно такие имена, как у файлов.
+// Если захочешь — добавь здесь сопоставления: { crucian:'gold-crucian' } и т.п.
 const ALIAS = {
   fish: {
     // crucian: 'gold-crucian',
@@ -44,28 +32,15 @@ const ALIAS = {
   },
 };
 
-// Кеши: чтобы не перезагружать то, чего нет/что уже есть
+// Кеш, чтобы не пытаться грузить отсутствующие файлы заново каждый раз
 const _MISSING = new Set(); // 'fish_crucian', 'pick_rusty_can', ...
 const _LOADED  = new Set();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Базовые хелперы
-// ─────────────────────────────────────────────────────────────────────────────
+// ——— общие вспомогательные ———
 function key(kind, id) { return `${kind}_${id}`; }
-
-/** Возвращает URL картинки из бандла или null, если файла нет */
 function file(kind, id) {
   const name = (ALIAS[kind]?.[id]) ?? id;
-  const url =
-    kind === 'fish' ? FISH_URL.get(name)
-    : kind === 'pick' ? PICK_URL.get(name)
-    : null;
-
-  if (!url) {
-    console.warn('[photo MISSING in bundle]', kind, name);
-    return null;
-  }
-  return url;
+  return new URL(`${name}.png`, BASE_URL[kind]).href;
 }
 
 function idsForLocation(locId) {
@@ -76,8 +51,6 @@ function idsForLocation(locId) {
     pick: ids.filter(id => PICK_IDS.has(id)),
   };
 }
-function fishIdsForLocation(locId) { return idsForLocation(locId).fish; }
-function pickIdsForLocation(locId) { return idsForLocation(locId).pick; }
 
 function _attachLogsOnce(scene) {
   if (scene._photoBankLogsAttached) return;
@@ -96,51 +69,32 @@ function _attachLogsOnce(scene) {
     const k = file?.key ?? '';
     if (file?.type === 'image' && (k.startsWith('fish_') || k.startsWith('pick_'))) {
       _MISSING.add(k);
-      console.warn('[photo LOAD ERROR]', k, file?.src);
+      console.warn('[photo MISSING]', k, file?.src);
     }
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Публичные API
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Поставить в очередь загрузку картинок для локации.
- * @param {Phaser.Scene} scene
- * @param {string} locId
- * @param {{fish?:boolean, pick?:boolean}=} opts — фильтр (по умолчанию оба true)
- */
-function queueForScene(scene, locId, opts = { fish: true, pick: true }) {
-  const lists = idsForLocation(locId);
-  const doFish = opts.fish !== false;
-  const doPick = opts.pick !== false;
+// ——— публичные API ———
+function queueForScene(scene, locId) {
+  const { fish, pick } = idsForLocation(locId);
 
   const oldPath = scene.load.path;
-  scene.load.setPath(''); // не конфликтуем с глобальным base path
+  scene.load.setPath(''); // не конфликтуем с base path фона/звуков
 
   let enqFish = 0, enqPick = 0;
 
-  if (doFish) {
-    for (const id of lists.fish) {
-      const k = key('fish', id);
-      if (scene.textures.exists(k) || _LOADED.has(k) || _MISSING.has(k)) continue;
-      const url = file('fish', id);
-      if (!url) { _MISSING.add(k); continue; }
-      scene.load.image(k, url);
-      enqFish++;
-    }
+  for (const id of fish) {
+    const k = key('fish', id);
+    if (scene.textures.exists(k) || _LOADED.has(k) || _MISSING.has(k)) continue;
+    scene.load.image(k, file('fish', id));
+    enqFish++;
   }
 
-  if (doPick) {
-    for (const id of lists.pick) {
-      const k = key('pick', id);
-      if (scene.textures.exists(k) || _LOADED.has(k) || _MISSING.has(k)) continue;
-      const url = file('pick', id);
-      if (!url) { _MISSING.add(k); continue; }
-      scene.load.image(k, url);
-      enqPick++;
-    }
+  for (const id of pick) {
+    const k = key('pick', id);
+    if (scene.textures.exists(k) || _LOADED.has(k) || _MISSING.has(k)) continue;
+    scene.load.image(k, file('pick', id));
+    enqPick++;
   }
 
   scene.load.setPath(oldPath);
@@ -149,23 +103,14 @@ function queueForScene(scene, locId, opts = { fish: true, pick: true }) {
   return { fish: enqFish, pick: enqPick };
 }
 
-/**
- * Догружает одну картинку нужного типа.
- * @param {Phaser.Scene} scene
- * @param {'fish'|'pick'} kind
- * @param {string} id
- * @returns {Promise<string|null>} ключ текстуры или null, если файла нет
- */
 function ensureOne(scene, kind, id) {
   const k = key(kind, id);
   if (scene.textures.exists(k)) return Promise.resolve(k);
   if (_MISSING.has(k))         return Promise.resolve(null);
 
-  const url = file(kind, id);
-  if (!url) { _MISSING.add(k); return Promise.resolve(null); }
-
   return new Promise((resolve) => {
     _attachLogsOnce(scene);
+    const url = file(kind, id);
 
     const onDone = (doneKey, type) => {
       if (doneKey === k && type === 'image') {
@@ -180,21 +125,19 @@ function ensureOne(scene, kind, id) {
   });
 }
 
-// Экспорт совместим с FishPhotos/PickPhotos
 export default {
-  // ключи/пути
+  // ключ/путь
   key, file,
   keyFor: key,
   fileFor: file,
+
   keyForFish: (id) => key('fish', id),
   keyForPick: (id) => key('pick', id),
 
-  // выбор по локации
+  // выбор по локации и загрузка
   idsForLocation,
-  fishIdsForLocation,
-  pickIdsForLocation,
-
-  // загрузка
   queueForScene,
+
+  // догрузка одной
   ensureOne,
 };

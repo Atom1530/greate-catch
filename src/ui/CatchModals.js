@@ -7,6 +7,31 @@ import PhotoBank from '../assets/PhotoBank.js';
 function _fmtKg(n){ return (n ?? 0).toFixed(3) + ' кг'; }
 function _fmtG(n){ return (n ?? 0).toFixed(0) + ' г'; }
 
+function _fmtWeightFromFish(f){
+  if (f?.weightKg != null) return (typeof f.weightKg === 'number' ? f.weightKg.toFixed(2) : String(f.weightKg)) + ' кг';
+  if (f?.weightG  != null) return (f.weightG|0) + ' г';
+  return '';
+}
+
+function _shareFish(scene, fish){
+  try {
+    scene.ioClient?.announceCatch?.({
+      fishId: fish.id, name: fish.name, weightKg: fish.weightKg,
+      lengthCm: fish.lengthCm, rarity: fish.rarity, photoKey: fish.imageKey
+    });
+  } catch {}
+  const who = scene.hud?.user?.username || scene.hud?.user?.name || 'Игрок';
+  const w   = _fmtWeightFromFish(fish);
+  scene.hud?.showShareBanner?.(`${who} хвастается:`, `${fish.name} — ${w}`);
+}
+
+function _shareLoot(scene, pick, coins = 0){
+  const who  = scene.hud?.user?.username || scene.hud?.user?.name || 'Игрок';
+  const name = pick?.name || 'находка';
+  try { scene.ioClient?.send?.(`Хвастается находкой: ${name}${coins>0 ? ` (+${coins} мон.)` : ''}`); } catch {}
+  scene.hud?.showShareBanner?.(`${who} хвастается находкой:`, name);
+}
+
 function _drawImage(scene, keyOrFrame, box, depth){
   if (keyOrFrame && typeof keyOrFrame === 'object'){
     const { key, frame } = keyOrFrame;
@@ -96,8 +121,6 @@ function _button(scene, x, y, w, label, color, depth, onClick, disabled=false, o
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Общий рендер модалки
-// entry: { title, name, imageKey, badges[], stats[], info?, actions[], onAction(id), onEsc?(), escAction?, closeDelayMs? }
-// idxInfo?: { index,total,onPrev,onNext }
 // ─────────────────────────────────────────────────────────────────────────────
 function _renderEntry(scene, ui, api, entry, idxInfo){
   const W = scene.scale.width, H = scene.scale.height;
@@ -125,19 +148,15 @@ function _renderEntry(scene, ui, api, entry, idxInfo){
   // overlay
   const overlay = scene.add.rectangle(0,0,W,H,0x000000,0)
     .setOrigin(0,0).setDepth(D).setScrollFactor(0).setInteractive();
-  // Раньше было ограничение по bottom-120px — убираем, чтобы везде вне панели закрывало
   overlay.on('pointerdown', () => { if (canClose) tryClose(); });
 
-  // panel (как было)
+  // panel
   const shadow = scene.add.rectangle(cx+2, cy+3, PW, PH, 0x000000, 0.22).setDepth(D+1);
   const panel  = scene.add.rectangle(cx, cy, PW, PH, 0x1f2433, 1)
     .setStrokeStyle(2, 0xffffff, 0.22).setDepth(D+1).setInteractive();
-  // Важно: клики по панели не должны передаваться в overlay
   panel.on('pointerdown', (_, __, ___, e)=> e?.stopPropagation());
 
-    // ...после panel.on('pointerdown', ...)
-
-  // Геометрия панели (для глобального клика)
+  // клик вне панели = закрыть
   const panelRect = {
     left:  Math.round(cx - PW/2),
     right: Math.round(cx + PW/2),
@@ -147,22 +166,18 @@ function _renderEntry(scene, ui, api, entry, idxInfo){
   const isInsidePanel = (x, y) =>
     x >= panelRect.left && x <= panelRect.right && y >= panelRect.top && y <= panelRect.bottom;
 
-  // Глобальный ловец клика: если кликнули ВНЕ панели — закрываем (как overlay)
   const onGlobalPointerDown = (pointer) => {
     if (!canClose) return;
     if (!isInsidePanel(pointer.worldX, pointer.worldY)) tryClose();
   };
   scene.input.on('pointerdown', onGlobalPointerDown);
 
-  // Снимем слушатель при закрытии модалки
   const detach = () => { scene.input.off('pointerdown', onGlobalPointerDown); };
-  // если кто-то зовёт onEsc (в т.ч. Esc/крестик/overlay), снимем и там
   const prevEsc = entry.onEsc;
   entry.onEsc = () => { try { detach(); } catch {} ; prevEsc ? prevEsc() : api.close(); };
   api.onEsc(() => { try { detach(); } catch {} ; tryClose(); });
 
-
-  // title + close (✕)
+  // title + close
   const title = scene.add.text(cx, cy - PH/2 + 16, entry.title || '', {
     fontFamily:'Arial, sans-serif', fontSize:'26px', color:'#ffffff'
   }).setOrigin(0.5,0).setDepth(D+2);
@@ -173,15 +188,17 @@ function _renderEntry(scene, ui, api, entry, idxInfo){
     .setOrigin(1,0)
     .setDepth(D+3)
     .setInteractive({ useHandCursor:true })
-    // Не даём клику уйти в panel/overlay, сразу закрываем
     .on('pointerdown', (pointer, lx, ly, ev) => { ev?.stopPropagation(); tryClose(); });
 
   ui.add([overlay, shadow, panel, title, btnClose]);
 
-
-  // сетка
+  // ── геометрия контента (зарезервируем низ под полосу действий)
+  const ACTION_BAR_H = Math.max(38, SZ.btnH + 12);   // высота нижней полосы
+  const CONTENT_GAP  = 18;                           // отступ между контентом и полосой
   const innerTop = title.y + 44;
-  const innerH   = PH - (innerTop - (cy - PH/2)) - 64;
+  const topGap   = innerTop - (cy - PH/2);
+  const innerH   = PH - topGap - ACTION_BAR_H - CONTENT_GAP;
+
   const colGap   = 16, leftW = Math.floor((PW - PAD*2 - colGap) * 0.42);
   const rightW   = PW - PAD*2 - colGap - leftW;
   const leftX    = cx - PW/2 + PAD + leftW/2;
@@ -193,16 +210,21 @@ function _renderEntry(scene, ui, api, entry, idxInfo){
   const imgObj = _drawImage(scene, entry.imageKey, imgBox, D+3);
   ui.add([imgFrame, imgObj]);
 
-  // пагинация (если есть)
+  // пагинация — строго над полосой действий
   if (idxInfo && idxInfo.total > 1){
-    const [lR, lG] = _triangleBtn(scene,
-      imgBox.x - imgBox.w/2 + 22, imgBox.y + imgBox.h/2 + 34, 'left', D+3, SZ.arrow);
-    const [rR, rG] = _triangleBtn(scene,
-      imgBox.x + imgBox.w/2 - 22, imgBox.y + imgBox.h/2 + 34, 'right', D+3, SZ.arrow);
-    const pageText = scene.add.text(imgBox.x, imgBox.y + imgBox.h/2 + 34,
-      `${idxInfo.index+1}/${idxInfo.total}`, {
+    const barBottomY = cy + PH/2 - 8;                // низ панели минус маленький зазор
+    const barTopY    = barBottomY - ACTION_BAR_H;    // верх полосы действий
+    const footerY    = barTopY - 12;                 // чуть выше полосы
+
+    const leftXPag   = imgBox.x - imgBox.w/2 + 22;
+    const rightXPag  = imgBox.x + imgBox.w/2 - 22;
+
+    const [lR, lG] = _triangleBtn(scene, leftXPag,  footerY, 'left',  D+3, SZ.arrow);
+    const [rR, rG] = _triangleBtn(scene, rightXPag, footerY, 'right', D+3, SZ.arrow);
+    const pageText = scene.add.text(imgBox.x, footerY, `${idxInfo.index+1}/${idxInfo.total}`, {
       fontFamily:'Arial, sans-serif', fontSize:String(SZ.pageFont)+'px', color:'#ffffff'
     }).setOrigin(0.5).setDepth(D+3);
+
     ui.add([lR, lG, rR, rG, pageText]);
     lR.on('pointerdown', ()=> idxInfo.onPrev && idxInfo.onPrev());
     rR.on('pointerdown', ()=> idxInfo.onNext && idxInfo.onNext());
@@ -226,70 +248,73 @@ function _renderEntry(scene, ui, api, entry, idxInfo){
 
   (entry.stats || []).forEach(s => { ui.add(_statLine(scene, rx0, ry, s.label, s.value, D+3)); ry += 36; });
 
-// ...после вывода stats
-if (entry.info){
-  const infoStr =
-    (typeof entry.info === 'string')
-      ? entry.info
-      : (entry.info?.bio || entry.info?.text || JSON.stringify(entry.info));
+  if (entry.info){
+    const infoStr =
+      (typeof entry.info === 'string')
+        ? entry.info
+        : (entry.info?.bio || entry.info?.text || JSON.stringify(entry.info));
 
-  // Лейбл (серый)
-  const infoLabel = scene.add.text(rx0 - 2, ry + 10, 'Описание', {
-    fontFamily: 'Arial, sans-serif',
-    fontSize: '15px',
-    color: '#c9d3e7'
-  })
-  .setOrigin(0, 0)
-  .setDepth(D + 3);
-  ui.add(infoLabel);
+    const infoLabel = scene.add.text(rx0 - 2, ry + 10, 'Описание', {
+      fontFamily: 'Arial, sans-serif', fontSize: '15px', color: '#c9d3e7'
+    }).setOrigin(0,0).setDepth(D+3);
+    ui.add(infoLabel);
 
-  // Небольшой сдвиг влево для самого текста
-  const SHIFT_X = -2; // если нужно сильнее/слабее — поменяй это число
-  const wrapW = (rightW - 32) + Math.min(0, SHIFT_X); // сохраняем правую границу
+    const SHIFT_X = -2;
+    const wrapW = (rightW - 32) + Math.min(0, SHIFT_X);
 
-  // Описание (ярко белый) с переносом
-  const desc = scene.add.text(rx0 + SHIFT_X, infoLabel.y + infoLabel.height + 4, infoStr, {
-    fontFamily: 'Arial, sans-serif',
-    fontSize: '15px',
-    color: '#ffffff',           // насыщенно-белый
-    lineSpacing: 2,
-    wordWrap: { width: wrapW, useAdvanced: true }
-  })
-  .setOrigin(0, 0)
-  .setDepth(D + 3);
+    const desc = scene.add.text(rx0 + SHIFT_X, infoLabel.y + infoLabel.height + 4, infoStr, {
+      fontFamily: 'Arial, sans-serif', fontSize: '15px', color: '#ffffff',
+      lineSpacing: 2, wordWrap: { width: wrapW, useAdvanced: true }
+    }).setOrigin(0,0).setDepth(D+3);
+    desc.setWordWrapWidth(wrapW, true);
+    ui.add(desc);
+  }
 
-  // дублируем wrap через API (иногда помогает с кириллицей)
-  desc.setWordWrapWidth(wrapW, true);
-
-  ui.add(desc);
-  ry = desc.y + desc.height + 8;
-}
-
-
-
-  const by = Math.round(cy + PH/2 - Math.max(22, Math.round(SZ.btnH/2) + 6));
-  const GAP = 12;
-  const rightEdge = cx + PW/2 - PAD;
+  // ── нижняя полоса действий на всю ширину ───────────────────────────────────
   const actions = entry.actions || [];
+  if (actions.length) {
+    // Порядок слотов: L = release, C = share, R = keep
+    const pick = (id) => actions.find(a => a.id === id);
+    const ordered = [pick('release'), pick('share'), pick('keep')].filter(Boolean);
 
-  if (actions.length === 1){
-    const a  = actions[0];
-    const xR = rightEdge - SZ.btnW/2;
-    ui.add(_button(scene, xR, by, SZ.btnW, a.label, a.color ?? 0x3b4662, D+3,
-                   ()=> entry.onAction && entry.onAction(a.id), !!a.disabled,
-                   { h: SZ.btnH, fontSize: SZ.btnFont }));
-  } else if (actions.length >= 2){
-    const aL = actions[0], aR = actions[1];
-    const xR = rightEdge - SZ.btnW/2;
-    const xL = xR - (SZ.btnW + GAP);
+    const BAR_PAD = 16;
+    const GAP     = 12;
+    const barH    = ACTION_BAR_H;
+    const barBottomY = cy + PH/2 - 8;
+    const bar     = scene.add.rectangle(cx, barBottomY, PW, barH, 0x0f141d, 0.86)
+      .setOrigin(0.5,1).setDepth(D+2).setStrokeStyle(2, 0xffffff, 0.10);
+    ui.add(bar);
 
-    ui.add(_button(scene, xL, by, SZ.btnW, aL.label, aL.color ?? 0x2a9d8f, D+3,
-                   ()=> entry.onAction && entry.onAction(aL.id), !!aL.disabled,
-                   { h: SZ.btnH, fontSize: SZ.btnFont }));
+    const btnY = barBottomY - Math.floor(barH/2);
 
-    ui.add(_button(scene, xR, by, SZ.btnW, aR.label, aR.color ?? 0x36425b, D+3,
-                   ()=> entry.onAction && entry.onAction(aR.id), !!aR.disabled,
-                   { h: SZ.btnH, fontSize: SZ.btnFont }));
+    // ширина под 3 слота
+    const btnW = Math.max(120, Math.floor((PW - BAR_PAD*2 - GAP*2) / 3));
+    const leftX   = cx - PW/2 + BAR_PAD + btnW/2;
+    const centerX = cx;
+    const rightX2 = cx + PW/2 - BAR_PAD - btnW/2;
+    const slotsX  = [leftX, centerX, rightX2];
+
+    if (ordered.length === 3){
+      ordered.forEach((a, i) => {
+        ui.add(_button(scene, slotsX[i], btnY, btnW, a.label, a.color ?? 0x3b4662, D+3,
+          () => entry.onAction && entry.onAction(a.id),
+          !!a.disabled, { h: SZ.btnH, fontSize: SZ.btnFont }));
+      });
+    } else if (ordered.length === 2){
+      // центрируем пару симметрично
+      const xL = cx - (btnW/2 + GAP/2);
+      const xR = cx + (btnW/2 + GAP/2);
+      ordered.forEach((a, i) => {
+        ui.add(_button(scene, i===0?xL:xR, btnY, btnW, a.label, a.color ?? 0x3b4662, D+3,
+          () => entry.onAction && entry.onAction(a.id),
+          !!a.disabled, { h: SZ.btnH, fontSize: SZ.btnFont }));
+      });
+    } else {
+      const a = ordered[0];
+      ui.add(_button(scene, centerX, btnY, btnW, a.label, a.color ?? 0x3b4662, D+3,
+        () => entry.onAction && entry.onAction(a.id),
+        !!a.disabled, { h: SZ.btnH, fontSize: SZ.btnFont }));
+    }
   }
 
   const keyEsc = scene.input.keyboard?.addKey('ESC');
@@ -325,28 +350,23 @@ function _entryForFish(fish, mode='catch', { keepnetFull=false } = {}){
   const info = _pickInfo(fish);
 
   if (mode === 'catch'){
-    return {
-      title:'Поймана рыба!',
-      name: fish.name || '',
-      imageKey, badges, stats, info,
-      actions:[
-        { id:'keep',    label:'Оставить (XP)',     color:0x2a9d8f, disabled: keepnetFull },
-        { id:'release', label:'Отпустить (×2 XP)', color:0x36425b }
-      ],
-      escAction:'keep', closeDelayMs:600
-    };
+    const actions = [
+      { id:'keep',    label:'Оставить (XP)',     color:0x2a9d8f, disabled: keepnetFull },
+      { id:'release', label:'Отпустить (×2 XP)', color:0x36425b },
+    ];
+    if (!fish._shared) actions.push({ id:'share', label:'Похвастаться', color:0x3b4662 });
+    return { title:'Поймана рыба!', name: fish.name || '', imageKey, badges, stats, info,
+             actions, escAction:'keep', closeDelayMs:600 };
   }
-  return {
-    title: fish.name || 'Садок',
-    name: fish.name || '',
-    imageKey, badges, stats, info,
-    actions:[
-      { id:'share',   label:'Хвастаться',     color:0x3b4662 },
-      { id:'release', label:'Отпустить рыбу', color:0x2a9d8f }
-    ],
-    escAction:'close', closeDelayMs:0
-  };
+
+  const actions = [];
+  if (!fish._shared) actions.push({ id:'share', label:'Похвастаться', color:0x3b4662 });
+  actions.push({ id:'release', label:'Отпустить рыбу', color:0x2a9d8f });
+
+  return { title: fish.name || 'Садок', name: fish.name || '', imageKey, badges, stats, info,
+           actions, escAction:'close', closeDelayMs:0 };
 }
+
 
 function _entryForLoot(pick, { coins=0 } = {}){
   const stats = [];
@@ -366,8 +386,9 @@ function _entryForLoot(pick, { coins=0 } = {}){
     stats,
     info,
     actions: [
-      { id:'take', label:(coins>0 ? 'Забрать' : 'Ок'), color:0x3b4662 },
-      { id:'drop', label:'Выбросить',                  color:0x2a9d8f }
+      { id:'take',  label:(coins>0 ? 'Забрать' : 'Ок'), color:0x3b4662 },
+      { id:'drop',  label:'Выбросить',                  color:0x2a9d8f },
+      { id:'share', label:'Похвастаться',               color:0x36425b }
     ],
     escAction: 'take',
     closeDelayMs: 300
@@ -379,7 +400,6 @@ function _entryForLoot(pick, { coins=0 } = {}){
 // ─────────────────────────────────────────────────────────────────────────────
 export function openFishCatchModal(scene, fish, extra = {}) {
   return new Promise((resolve) => {
-    // базовый список (садок + текущая пойманная)
     const baseKeepnet = Array.isArray(extra.keepnet)
       ? extra.keepnet
       : (Array.isArray(scene.keepnet) ? scene.keepnet : []);
@@ -392,7 +412,6 @@ export function openFishCatchModal(scene, fish, extra = {}) {
 
     scene.modals.open((ui, api) => {
       let finished = false;
-
 
       const finish = (v) => {
         if (finished) return;
@@ -409,13 +428,24 @@ export function openFishCatchModal(scene, fish, extra = {}) {
         const entry = _entryForFish(cur, isCatch ? 'catch' : 'keepnet', { keepnetFull });
 
         entry.onAction = (id) => {
-          if (isCatch) {
-            if (id === 'keep') finish('keep');
-            else if (id === 'release') finish('release');
-          } else {
-            if (id === 'share') {
-              scene.showToast?.('Скоро: поделиться трофеем');
-            } else if (id === 'release') {
+             if (isCatch) {
+                 if      (id === 'keep')    finish('keep');
+                   else if (id === 'release') finish('release');
+                    else if (id === 'share') {
+                 if (!cur._shared) {              // защита от спама
+                      cur._shared = true;            // пометили как “уже похвастались”
+                     _shareFish(scene, cur);        // отправили в чат + баннер
+                       rerender();                    // убрали кнопку
+                  }
+                   }
+                   } else {
+                   if (id === 'share') {
+                   if (!cur._shared) {
+                    cur._shared = true;
+                  _shareFish(scene, cur);
+                   rerender();
+                  }
+                 } else if (id === 'release') {
               const removed = baseKeepnet.splice(idx, 1);
               if (removed.length) {
                 const iLocal = list.indexOf(removed[0]);
@@ -443,7 +473,6 @@ export function openFishCatchModal(scene, fish, extra = {}) {
     });
   });
 }
-
 
 export function openKeepnetModal(scene, keepnet, startIndex = 0){
   const list = Array.isArray(keepnet) ? keepnet : [];
@@ -477,9 +506,13 @@ export function openKeepnetModal(scene, keepnet, startIndex = 0){
             scene.keepnetBadge?.set(list.length, scene.keepnetCap ?? 25);
             rerender();
           } else if (id === 'share'){
-            scene.showToast?.('Скоро: поделиться трофеем');
-          }
-        };
+    if (!fish._shared) {
+      fish._shared = true;
+      _shareFish(scene, fish);
+      rerender();                      // кнопка исчезнет
+    }
+  }
+};
         e.onEsc = () => finish({ action:'close', index: idx });
 
         _renderEntry(scene, ui, api, e, {
@@ -499,7 +532,6 @@ export function openLootModal(scene, pick, { coins = 0 } = {}) {
     scene.modals.open((ui, api) => {
       let finished = false;
 
-
       const finish = (value) => {
         if (finished) return;
         finished = true;
@@ -509,7 +541,10 @@ export function openLootModal(scene, pick, { coins = 0 } = {}) {
       };
 
       const entry = _entryForLoot(pick, { coins });
-      entry.onAction = (id) => { if (id === 'take' || id === 'drop') finish(id); };
+      entry.onAction = (id) => {
+        if (id === 'take' || id === 'drop') finish(id);
+        else if (id === 'share') _shareLoot(scene, pick, coins);
+      };
       entry.onEsc = () => finish(entry.escAction || 'take');
 
       ui.removeAll?.(true);
@@ -517,6 +552,3 @@ export function openLootModal(scene, pick, { coins = 0 } = {}) {
     });
   });
 }
-
-
-

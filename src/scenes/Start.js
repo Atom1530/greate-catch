@@ -2,11 +2,12 @@
 import { GearSlots } from '../ui/GearSlots.js';
 import { spawnFish } from '../sim/spawn.js';
 import { calcFightParams } from '../data/balance.js';
-import { BarsDock } from '../ui/BarsDock.js';
+import BottomHUD from '../ui/BottomHUD.js';
 import { Progress } from '../progression/progress.js';
 import { GearModal } from '../ui/GearModal.js';
 import { GearDB, getDefaultGear } from '../data/gear.js';
 import { Bobber } from '../ui/Bobber.js';
+import { RodView } from '../ui/RodView.js';
 import UI from '../ui/theme.js';
 import { ModalHost } from '../ui/ModalHost.js';
 import { LocationMgr } from '../locations/LocationMgr.js';
@@ -21,9 +22,14 @@ import { handleCatch } from '../quests/CatchFlow.js';
 import { setRewardSink } from '../quests/QuestRewards.js';
 import { onWalletChange, onLevelChange } from '../quests/QuestHooks.js';
 import { API, Auth } from '../net/api.js';
-import { ChatClient } from '../net/chat.js';
 import ChatOverlay from '../ui/ChatOverlay.js';
-import Phaser from 'phaser';
+import { openProfileModal } from '../ui/ProfileModal.js';
+import { ChatClient, LocalChatClient } from '../net/chat.js';
+import RoomService from '../net/RoomService.js';
+import Phaser from "phaser";
+
+
+
 
 export class Start extends Phaser.Scene {
   constructor(){ super('Start'); this.locId = 'lake'; }
@@ -31,8 +37,10 @@ export class Start extends Phaser.Scene {
 
   preload(){
     this.locId = VM.get?.('locationId', this.locId) ?? this.locId;
-    LocationMgr.loadAssets(this);                 // фон, звуки и т.д.
-    PhotoBank.queueForScene(this, this.locId);    // (если нужны фотки лута/мусора)
+    // LocationMgr.loadAssets(this);                 // только как фолбэк.
+    // PhotoBank.queueForScene(this, this.locId);    // (только как фолбэк)
+     this.load.image('rod_tier1', 'src/assets/ui/rods/tir1.png');
+
   }
 
 async create(){
@@ -65,23 +73,44 @@ if (savedProgress?.level != null) this.progress.level = savedProgress.level|0;
 else                               this.progress.level = savedLevel|0;
 
 
-  // --- 2) Серверный стейт поверх VM ---
-  let st = null;
-  try { st = window.API_BASE ? await API.loadState() : null; } catch (e){ console.warn('loadState failed', e); }
-  if (st){
-    this.wallet       = st.wallet      ?? this.wallet;
-    this.keepnet      = st.keepnet     ?? this.keepnet;
-    this.keepnetCap   = st.keepnetCap  ?? this.keepnetCap;
-    this.gear         = st.gear        ?? this.gear;
-    this.rigDepthM    = st.rigDepthM   ?? this.rigDepthM;
-    this.locId        = st.locationId  || this.locId;
-    this.inventory    = st.inventory   ?? this.inventory;
-    this.activeBaitId = st.activeBaitId?? this.activeBaitId;
-    this.gear.inv   ||= {};
-    this.gear.inv.bait = this.inventory?.bait?.[this.activeBaitId] | 0;
-      if (st.progress?.xp != null)    this.progress.xp    = st.progress.xp|0;
+// --- ЧАТ КЛИЕНТ + ROOM SERVICE ---
+const client = (window.API_BASE && window.io)
+  ? new ChatClient(window.io, window.API_BASE)
+  : new LocalChatClient();
+
+this.room = new RoomService(client, {
+  onInfo: ({ roomId, occupants, capacity }) => {
+    this.hud?.setRoomPresence?.(occupants, capacity);
+  },
+  onMessage: (msg) => this.chatUI?.push?.(msg),
+  onError: (e) => this.showToast?.('Ошибка чата')
+});
+
+
+// --- 2) Серверный стейт поверх VM ---
+let st = null;
+try {
+  st = window.API_BASE ? await API.loadState() : null;
+} catch (e) {
+  console.warn('loadState failed', e);
+}
+if (st){
+  this.wallet       = st.wallet      ?? this.wallet;
+  this.keepnet      = st.keepnet     ?? this.keepnet;
+  this.keepnetCap   = st.keepnetCap  ?? this.keepnetCap;
+  this.gear         = st.gear        ?? this.gear;
+  this.rigDepthM    = st.rigDepthM   ?? this.rigDepthM;
+  this.locId        = st.locationId  || this.locId;
+  this.inventory    = st.inventory   ?? this.inventory;
+  this.activeBaitId = st.activeBaitId?? this.activeBaitId;
+  this.gear.inv   ||= {};
+  this.gear.inv.bait = this.inventory?.bait?.[this.activeBaitId] | 0;
+
+  // ⬇️ ДОБАВЬ ЭТИ ДВЕ СТРОКИ
+  if (st.progress?.xp    != null) this.progress.xp    = st.progress.xp|0;
   if (st.progress?.level != null) this.progress.level = st.progress.level|0;
-  }
+}
+
 
   // --- 3) Дебаунс-автосейв: VM + сервер ---
   let _saveTO = null;
@@ -113,11 +142,22 @@ else                               this.progress.level = savedLevel|0;
 };
 
 window.addEventListener('beforeunload', () => this.commitState?.());
-this.events.once('shutdown', () => this.commitState?.());
+this.events.once('shutdown', () => {
+  this.commitState?.();
+  try { this._clockTick?.remove(); this._clockTick = null; } catch (_) {}
+});
 
   // --- 4) Локация/время/фон ---
   this.locationMgr = new LocationMgr(this, this.locId);
   this.locationMgr.applyBackground();
+
+
+ // — Удочка в мире (PNG) —
+ this.rodView = new RodView(this);
+ this.rodView.setRod(this.gear?.rod || null);
+ this.rodView.setTipUV(0.515, 0.032); // пример тонкой подгонки
+
+ this.scale.on('resize', () => this.rodView?.layout());
 
   const onPhaseChange = (phase) => {
     const ti = this.timeCycle?.getInfo?.(); const t = ti?.t ?? 0;
@@ -146,17 +186,28 @@ this.events.once('shutdown', () => this.commitState?.());
   this.positionPullButtonAtSlotsLevel();
 
   this.scale.on('resize', () => this.computeCastZone());
-
-  this.createBarsDock();
-  this.rodBar.setThreshold(this.SAFE_THR);
+  this.rodView?.layout();
+ // BottomHUD: бары + привязка к кнопке «Тянуть»
+  this.bottomHUD = new BottomHUD(
+    this,
+    this.gear,
+    {
+      rod:  () => this.openGearModal('rod'),
+      reel: () => this.openGearModal('reel'),
+      line: () => this.openGearModal('line'),
+      hook: () => this.openGearModal('hook'),
+      bait: () => this.openBaitModal(),
+    },
+    { x: this.pullBtnBg.x, width: this.pullBtnSize }
+  );
+  this.rodBar  = this.bottomHUD.rodBar;
+  this.lineBar = this.bottomHUD.lineBar; 
+   this.rodBar.setThreshold(this.SAFE_THR);
   this.lineBar.setThreshold(this.SAFE_THR);
-  this.barsDock.setMode('idle');
+  this.bottomHUD.setMode('idle');
 
   this.modals = new ModalHost(this, UI.z.modal);
 
-  // Прогресс
-  this.progress = new Progress(this);
-  if (st?.level != null) this.progress.level = st.level;
 
   // Эффекты/редактор
   this.locationMgr.enableWaterFX({ amp: 2, waveLen: 56, speed: 22 });
@@ -165,11 +216,24 @@ this.events.once('shutdown', () => this.commitState?.());
 
   // Top HUD
   this.rigDepthM = this.rigDepthM ?? 1.20;
-  this.hud = new TopHUD(this, {
-    wallet: this.wallet,
-    progress: this.progress,
-    keepnetCapacity: this.keepnetCap ?? 25,
-    timeCycle: this.timeCycle,
+this.hud = new TopHUD(this, {
+  user: Auth?.user,
+  wallet: this.wallet,
+  progress: this.progress,
+  keepnetCapacity: this.keepnetCap ?? 25,
+  timeCycle: this.timeCycle,
+
+  onOpenProfile: () => {
+    openProfileModal(this, {
+      user: Auth?.user,
+      progress: this.progress,
+      wallet: this.wallet,
+      keepnetCount: this.keepnet?.length ?? 0,
+      keepnetCap: this.keepnetCap ?? 25,
+      achievements: VM.get('achievements', []),
+    });
+  },
+    
 
     onKeepnetClick: async () => {
       if (!this.keepnet?.length){ this.showToast?.('Садок пуст'); return; }
@@ -181,15 +245,15 @@ this.events.once('shutdown', () => this.commitState?.());
       }
     },
 
-    onLocationPick: (locId) => {
-      if (this.state === 'fight'){ this.showToast('Нельзя менять локацию во время вываживания'); return; }
-      this.abortFishingDueToLocationChange();
-      VM.snapshotFromStart?.(this);
-      this.commitState();
-      // чат: покинуть текущую комнату (подключимся в новой сцене)
-      if (this.currentRoomId) this.ioClient?.leave(this.currentRoomId);
-      this.scene.start('LoadLoc', { locId });
-    },
+    onLocationPick: async (locId) => {
+  if (this.state === 'fight'){ this.showToast('Нельзя менять локацию во время вываживания'); return; }
+  this.abortFishingDueToLocationChange();
+  VM.snapshotFromStart?.(this);
+  this.commitState();
+
+  try { await this.room?.leave?.(this.currentRoomId); } catch {}
+  this.scene.start('LoadLoc', { locId });
+},
 
     onGoBase: () => {
       if (this.state === 'fight'){ this.showToast('Нельзя на базу во время вываживания'); return; }
@@ -205,6 +269,27 @@ this.events.once('shutdown', () => this.commitState?.());
     sonarCorner: 'left',
     sonarAtTop:  true,
   });
+// --- СВЯЗКА SONAR ↔ DEPTH CTRL + поведение поплавка ---
+const sonar = this.hud?.sonar;
+const depthCtrl = this.hud?.depthCtrl;
+
+if (sonar && depthCtrl) {
+  // разово привязываем контрол глубины к локатору
+  sonar.attachDepthCtrl(depthCtrl);
+
+  // точка локатора фиксирована по X в колонке заброса (классический режим)
+  sonar.setDotFollowX(false);
+
+  // порог «касаемся дна» (6 см, подправь по вкусу)
+  sonar.epsBottom = 0.06;
+
+  // когда зонд сообщает «isTouchingBottom» — кладём поплавок
+  sonar.onProbe = ({ isTouchingBottom }) => {
+    this.bobber?.setShallow(isTouchingBottom);
+  };
+}
+
+// позиция кнопки (правый верх, ниже часов/иконок)
 
   // Инициализировать HUD-числа
   this.hud.setWallet(this.wallet.coins|0, this.wallet.gold|0);
@@ -214,15 +299,32 @@ this.events.once('shutdown', () => this.commitState?.());
   this.computeCastZone();
   this.positionPullButtonAtSlotsLevel();
 
-// --- 7) ЧАТ: один раз, правильная комната ---
-if (window.API_BASE && window.io) {                 // только если реально есть бэкенд
-  this.ioClient = new ChatClient(window.io, window.API_BASE);
-  this.currentRoomId = this.locationMgr.getCurrentId?.() || this.locId || 'lake';
-  this.ioClient.join?.(this.currentRoomId);
+// --- 7) ЧАТ / ROOM ---
+{
+  const roomId = this.locationMgr.getCurrentId?.() || this.locId || 'lake';
+  this.currentRoomId = roomId;
 
-  this.chatUI = new ChatOverlay(this, this.ioClient, this.currentRoomId);
-  this.chatUI?.loadHistory?.(API, 40);             // безопасный вызов
+  const res = await this.room.switchTo(roomId);
+  if (!res.ok) {
+    if (res.reason === 'full') {
+      this.showToast('Комната переполнена (100/100). Попробуй позже.');
+    } else {
+      this.showToast('Не удалось войти в комнату');
+    }
+    // оставим игрока в текущей локации; при желании можно откатить на lake
+  }
+
+  // UI чата
+  this.chatUI = new ChatOverlay(this, this.room.client, roomId, {
+    anchor: 'left', w: 250, h: 240, raise: 100
+  });
+  this.chatUI.loadHistory(null, 40);
+
+  // отрисовать онлайн сейчас (если сервер уже прислал)
+  const info = this.room.getRoomInfo(roomId);
+  this.hud?.setRoomPresence?.(info.occupants, info.capacity);
 }
+
 
   // --- 8) Экономика / инпут ---
   this.marketCfg = {
@@ -233,10 +335,11 @@ if (window.API_BASE && window.io) {                 // только если р�
   };
 
   this.input.on('pointerdown', (p) => {
-    if (this.uiLock) return;
-    if (this.state === 'fight' || this.state === 'result') return;
-    this.castLine(p.worldX, p.worldY);
-  });
+  if (this.uiLock) return;
+  if (this.state === 'fight' || this.state === 'result' || this.state === 'casting') return;
+  this.castLine(p.worldX, p.worldY);
+});
+
 
   // --- 9) Реварды ---
   setRewardSink((reward) => {
@@ -253,6 +356,17 @@ if (window.API_BASE && window.io) {                 // только если р�
     if (reward.perks?.skillPoints) parts.push(`💡 +${reward.perks.skillPoints}`);
     if (parts.length) this.showToast?.(`Нагорода: ${parts.join(' ')}`);
   });
+
+this.time.delayedCall(200, () => {
+  const nextIds = ['lake']; // например, подсказанные UI/квестом
+  const warm = new Phaser.Loader.LoaderPlugin(this);
+  nextIds.forEach(id => {
+    LocationMgr.loadAssets({ load: warm }, id);
+    PhotoBank.queueForScene({ load: warm, textures: this.textures }, id);
+  });
+  warm.start();
+});
+
 
   // --- 10) Стартовое состояние UI ---
   this.setPullUI('idle');
@@ -278,12 +392,13 @@ _spawnTimeFromPhase(phase){
     const EPS = 0.10; // 10 см
     return (this.rigDepthM > actualDepth + EPS);
   }
-  _applyRigToBobber(){
-    if (!this.bobber) return;
-    const d = this.locationMgr.getDepthAtXY(this.bobber.x, this.bobber.y);
-    const lie = this._shouldLieByRig(d);
-    this.bobber.setShallow(lie);
-  }
+_applyRigToBobber(){
+  if (!this.bobber) return;
+  const useY = (this.state === 'fight') ? this.bobber.y : (this._castAnchorY ?? this.bobber.y);
+  const d = this.locationMgr.getDepthAtXY(this.bobber.x, useY);
+  const lie = this._shouldLieByRig(d);
+  this.bobber.setShallow(lie);
+}
 
   // --- Инвентарь/синхронизация ---
   initInventory(){
@@ -358,6 +473,7 @@ _spawnTimeFromPhase(phase){
       this.slots?.update(this.gear);
       this.computeCastZone();
       this.showToast(`${def.name} экипирована`);
+      if (kind === 'rod') this.rodView?.setRod(def);
     };
 
     this.uiLock = true;
@@ -372,7 +488,7 @@ _spawnTimeFromPhase(phase){
     const W = this.scale.width, H = this.scale.height;
     this.pullBtnSize = 128;
     const btnW = this.pullBtnSize, btnH = this.pullBtnSize;
-    const PAD = UI.layout.pull.outerPad;
+    const PAD = UI?.layout?.pull?.outerPad ?? 24;
 
     const tempX = W - PAD - btnW / 2;
     const tempY = H - PAD - btnH / 2;
@@ -402,6 +518,15 @@ _spawnTimeFromPhase(phase){
       if (!this.pullEnabled) return;
       if (this.state === 'fight') { this.pullPressed = false; this.pullBtnBg.setFillStyle(0x1e90ff,1); }
     });
+    // после того как известны размеры кнопки «Тянуть»
+this.rodView?.setMovementMargins({
+  hudRightPad: (UI.layout?.pull?.outerPad ?? 24) + (this.pullBtnSize ?? 128) + 20,
+  edge: 24,
+  gapToFloat: 90
+});
+// политика: по последней твоей формулировке — «с противоположной стороны»
+this.rodView?.setMovementPolicy('near'); // поменяешь на 'near' — будет «рядом»
+
   }
 
   setPullUI(mode){
@@ -412,27 +537,32 @@ _spawnTimeFromPhase(phase){
       this.pullEnabled = false; this.pullPressed = false;
       this.pullBtnBg.setFillStyle(0x3a3a3a, 1).setAlpha(0.35);
       this.pullBtnLabel.setText('');
+      this.rodView?.setIdleSway(false);
+      this.rodView?.setTension(0);
     }
     if (mode === 'bite'){
       this.pullEnabled = true; this.pullPressed = false;
+        this.rodView?.setIdleSway(true);
       this.pullBtnBg.setFillStyle(0xff8c00, 1).setAlpha(1);
       this.pullBtnLabel.setText('Подсечь');
       this.tweens.add({
         targets:[this.pullBtnBg,this.pullBtnLabel],
         alpha: { from:1, to:0.65 }, duration:500, yoyo:true, repeat:-1, ease:'Sine.inOut'
       });
+      this.rodView?.setTension(0.06);
     }
     if (mode === 'fight'){
       this.pullEnabled = true; this.pullPressed = false;
       this.pullBtnBg.setFillStyle(0x1e90ff, 1).setAlpha(1);
       this.pullBtnLabel.setText('Тянуть');
+      this.rodView?.setIdleSway(false);
     }
   }
 
   abortFishingDueToLocationChange(){
     if (this.bobber) this.bobber?.stopAllTweens();
     this.clearAttempt();
-    this.barsDock.setMode('idle');
+    this.bottomHUD.setMode('idle');
     this.setPullUI('idle');
     this.state = 'idle';
   }
@@ -442,12 +572,12 @@ _spawnTimeFromPhase(phase){
     this.barsDock = new BarsDock(this, this.slots, btnRect);
     this.rodBar  = this.barsDock.rodBar;
     this.lineBar = this.barsDock.lineBar;
-    this.barsDock.setMode('idle');
+    this.bottomHUD.setMode('idle');
   }
 
   positionPullButtonAtSlotsLevel(){
     const size = this.pullBtnSize;
-    const PAD = UI.layout.pull.outerPad;
+    const PAD = UI?.layout?.pull?.outerPad ?? 24;
     const x = this.scale.width - PAD - size / 2;
     const y = this.slots.yTop + (this.slots.h / 2);
     this.pullBtnBg.setPosition(x, y);
@@ -498,37 +628,75 @@ computeCastZone(){
 }
 
 
-  castLine(x, y){
-   if (!this.locationMgr.canCastAt(x, y)){
-   this.showToast('Сюда забросить нельзя'); return;
-   }
+async castLine(x, y){
+  if (!this.locationMgr.canCastAt(x, y)){
+    this.showToast('Сюда забросить нельзя'); return;
+  }
   if ((this.gear.inv.bait ?? 0) <= 0){
     this.showToast('Нужна наживка (червь)'); return;
   }
-    this.clearAttempt();
+  if (this.state === 'casting' || this.uiLock) return;
 
-    this.bobber = new Bobber(this, x, y);
-    this.bobber.startIdleBobbing();
+  // 1) сброс прошлого захода
+  this.clearAttempt();
 
-    this.hud.showSonarAt(x, y);
-    this.hud.setSonarFollowX(false);
-    this.hud.updateSonarDot(y);
+  // 2) состояние «кастим» и базовая UI-подготовка
+  this.state = 'casting';
+  this.bottomHUD.setMode('idle');
+  this.setPullUI('idle');
 
-    const waterDepth = this.locationMgr.getDepthAtXY(x, y);
-    const hookDepth  = Math.min(this.rigDepthM ?? 0, waterDepth);
-    this._waterDepthAtCast = waterDepth;
-    this._hookDepthAtCast  = hookDepth;
-    this._castDepthM       = hookDepth;
+  // 3) запомним колонку/якорь (для сонара/глубины)
+  this._castAnchorX = x;
+  this._castAnchorY = y;
 
-    this._applyRigToBobber();
+  // 4) мгновенно переносим базу удочки к колонке и играем анимацию заброса
+  const castMs = Phaser.Math.Between(2000, 3000); // 2..3 сек
+  this.rodView?.teleportBaseToCast(x);
+  await this.rodView?.playCastSequence({ x, y }, { duration: castMs });
 
-    this.state = 'waiting';
-    this.barsDock.setMode('idle');
-    this.setPullUI('idle');
+  // 5) теперь создаём поплавок и привязываем леску
+  this.bobber = new Bobber(this, x, y);
+  this.bobber.startIdleBobbing();
 
-    const delay = Phaser.Math.Between(1000,1000);
-    this.biteTimer = this.time.delayedCall(delay, () => this.onBite());
+  this.rodView?.follow(this.bobber);  // теперь леска видна
+  this.rodView?.setTension(0.06);
+  this.rodView?.setIdleSway(true);
+
+  // 6) показать сонар именно для этой колонки; точка фиксирована по X
+  this.hud.showSonarAt(x, y);
+  this.hud.setSonarFollowX(false);
+
+  const sonar = this.hud?.sonar;
+  if (sonar){
+    sonar.show(x, y);
+    sonar.setDotFollowX(false);
+    sonar.onProbe = ({ isTouchingBottom }) => {
+      this._sonarTouchingBottom = isTouchingBottom;
+      if (this.state === 'fight') this.bobber?.setShallow(isTouchingBottom);
+    };
+    sonar.updateDot(y);
   }
+
+  // 7) физика глубин
+  const waterDepth = this.locationMgr.getDepthAtXY(x, y);
+  const hookDepth  = Math.min(this.rigDepthM ?? 0, waterDepth);
+  this._waterDepthAtCast = waterDepth;
+  this._hookDepthAtCast  = hookDepth;
+  this._castDepthM       = hookDepth;
+
+  // применяем к поплавку (лежит/стоит)
+  this._applyRigToBobber();
+
+  // 8) ожидание поклёвки
+  this.state = 'waiting';
+  this.bottomHUD.setMode('idle');
+  this.setPullUI('idle');
+
+  const delay = Phaser.Math.Between(10000, 12000);
+  this.biteTimer = this.time.delayedCall(delay, () => this.onBite());
+}
+
+
 
   onBite(){
     if (!this.bobber) return;
@@ -625,7 +793,7 @@ const picked = spawnFish({
     this.pullPressed = false; this.noPullTime = 0; this.holdAcc = 0; this.baitCharged = false;
     this.hud?.update();
 
-    this.barsDock.setMode('fight');
+    this.bottomHUD.setMode('fight');
     this.setPullUI('fight');
 
 
@@ -679,6 +847,7 @@ const picked = spawnFish({
     this.lineVal = Phaser.Math.Clamp(this.lineVal + bump, 0, 100);
     this.rodBar.set(this.rodVal);
     this.lineBar.set(this.lineVal);
+    this.rodView?.setTension(Math.max(this.rodVal, this.lineVal) / 100);
     if (this.bobber) this.bobber.y = Math.max(this.castTopY + 8, this.bobber.y - 4);
   }
 
@@ -692,9 +861,12 @@ if (ti){
 this.hud?.update();
 
 if (this.bobber && (this.state === 'idle' || this.state === 'waiting')) {
-  this.hud.updateSonarDot(this.bobber.y);
+  // точка у сонара в «классике» фиксирована по X, currentY ему не важен,
+  // но передадим якорь для ясности
+  this.hud.updateSonarDot(this._castAnchorY ?? this.bobber.y);
   this._applyRigToBobber();
 }
+
 
 if (this.state === 'fight' && this.bobber){
   const tension = Math.max(this.rodVal, this.lineVal) / 100;
@@ -706,13 +878,20 @@ if (this.state === 'fight' && this.bobber){
 }
 
 if (this.state !== 'fight' || !this.params) {
-  // Не-боевой апдейт — здесь можно лишь поджать bobber в пределах воды и выйти
   if (this.bobber){
     const bottomClamp = this.castBottomY;
     this.bobber.y = Phaser.Math.Clamp(this.bobber.y, this.castTopY + 8, bottomClamp);
+    // более глубокий провис в ожидании
+    this.rodView?.setTension(0.05);
+  } else {
+    this.rodView?.follow(null);
+    this.rodView?.setTension(0);
+    this.rodView?.setIdleSway(false);
   }
+  this.rodView?.update();
   return;
 }
+
 
 
     const dt = delta / 1000;
@@ -725,6 +904,9 @@ if (this.state !== 'fight' || !this.params) {
       this.rodVal  = Phaser.Math.Clamp(this.rodVal,  0, 100);
       this.lineVal = Phaser.Math.Clamp(this.lineVal, 0, 100);
       this.rodBar.set(this.rodVal); this.lineBar.set(this.lineVal);
+         // натяжение 0..1
+   const t = Math.max(this.rodVal, this.lineVal) / 100;
+   this.rodView?.setTension(t);
       return;
     }
 
@@ -734,6 +916,7 @@ if (this.state !== 'fight' || !this.params) {
     this.rodVal  = Phaser.Math.Clamp(this.rodVal,  0, 100);
     this.lineVal = Phaser.Math.Clamp(this.lineVal, 0, 100);
     this.rodBar.set(this.rodVal); this.lineBar.set(this.lineVal);
+    this.rodView?.setTension(Math.max(this.rodVal, this.lineVal) / 100);
 
     // Поломки
     if (this.rodVal >= 100 && this.lineVal >= 100) return (Math.random()<0.5? this.breakRod(): this.breakLine());
@@ -774,6 +957,8 @@ if (this.state !== 'fight' || !this.params) {
     if (this.noPullTime > P.escapeLimit || this.bobber.y <= this.castTopY + 8){
       return this.fishEscape('Рыба сорвалась');
     }
+
+this.rodView?.update();
 
     // Удержание у берега
     const atShore = (this.bobber.y >= this.logicShoreY - 6);
@@ -826,7 +1011,7 @@ async landFish(){
   const pick = this.fish;
 
   // общий UI-переход из боя
-  this.barsDock.setMode('idle');
+  this.bottomHUD.setMode('idle');
   this.setPullUI('idle');
 
   // общий контекст для квеста/спавна
@@ -887,10 +1072,10 @@ async landFish(){
     award(true);
   }
 
- this.ioClient?.announceCatch?.({
-  fishId: pick.id, name: pick.name, weightKg: pick.weightKg, lengthCm: pick.lengthCm,
-  rarity: pick.rarity, photoKey: pick.imageKey
-});
+//  this.ioClient?.announceCatch?.({
+//   fishId: pick.id, name: pick.name, weightKg: pick.weightKg, lengthCm: pick.lengthCm,
+//   rarity: pick.rarity, photoKey: pick.imageKey
+// });
 
   this.clearAttempt();
   this.state = 'idle';
@@ -903,8 +1088,11 @@ updateWalletHUD(){
   endFight(){
     this.hud.setSonarFollowX(false);
     this.hud.setSonarFight?.(false);
+    this.rodView?.setIdleSway(false);
     this.clearAttempt();
-    this.barsDock.setMode('idle');
+    this.rodView?.follow(null);
+    this.rodView?.resetPose();
+    this.bottomHUD.setMode('idle');
     this.setPullUI('idle');
     this.state = 'idle';
     this.tailPx = 0;
@@ -1032,6 +1220,9 @@ updateWalletHUD(){
 
     this.hud.hideSonar();
     this.hud.setSonarFight?.(false);   
+    this.rodView?.follow(null);
+    this.rodView?.resetPose();
+    this.rodView?.setIdleSway(false);
 
     this.fish = null; this.params = null;
     this.kickTweening = false;

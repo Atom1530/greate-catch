@@ -12,18 +12,8 @@ export const LOCATIONS = [
       day:   { key: 'bg_lake_day',     url: BG('bg_lake_day') },
       // dusk:  { key: 'bg_lake_sunset',  url: BG('bg_lake_sunset') },
       night: { key: 'bg_lake_night',   url: BG('bg_lake_night') },
-    bgDay:   { key: 'bg_lake_day',     url: BG('bg_lake_day') },
-    bgNight: { key: 'bg_lake_night',   url: BG('bg_lake_night') },
-    bgDawn:  { key: 'bg_lake_evening', url: BG('bg_lake_evening') },
-    bgDusk:  { key: 'bg_lake_sunset',  url: BG('bg_lake_sunset') },
     },
 
-    depthGrid: { cols: 8, rows: 4, data: [
-      1.2,1.6,2.0,2.8,3.6,3.2,2.0,1.5,
-      1.4,1.8,2.4,3.2,3.8,3.4,2.2,1.6,
-      1.6,2.0,2.6,3.4,3.9,3.5,2.4,1.8,
-      1.0,1.2,1.6,2.2,2.6,2.2,1.6,1.1,
-    ]},
 
     depthColumns: {
       cols: 10,
@@ -122,19 +112,63 @@ castMask: {
   {
     id: 'river',
     title: 'Река',
-    bg: {
-      key: 'bg_river_day',
-      url: new URL('../assets/bg/bg_river_day.png', import.meta.url).href,
+            bgSet: {
+      // dawn:  { key: 'bg_lake_evening', url: BG('bg_lake_evening') }, // если нет отдельного dawn
+      day:   { key: 'bg_river_day',     url: BG('bg_river_day') },
+      // dusk:  { key: 'bg_lake_sunset',  url: BG('bg_lake_sunset') },
+      night: { key: 'bg_river_night',   url: BG('bg_river_night') },
+
     },
-    depthGrid: {
-      cols: 10, rows: 4,
-      data: [
-        0.8,1.0,1.2,1.6,2.2,2.6,2.2,1.6,1.2,1.0,
-        0.9,1.1,1.4,1.8,2.6,3.0,2.6,1.8,1.4,1.1,
-        1.0,1.2,1.6,2.0,2.8,3.2,2.8,2.0,1.6,1.2,
-        0.8,0.9,1.1,1.4,2.0,2.4,2.0,1.4,1.1,0.9,
+    depthColumns: {
+      cols: 10,
+      profiles: [
+        [[0,5.7],[0.25,4.6],[0.55,3.1],[1,4.6]],
+        [[0.3,6.1],[0.30,4.8],[0.60,4.3],[1,3.6]],
+        [[0.2,3.6],[0.30,4.8],[0.60,5.3],[1,3.6]],
+        [[0,4.5],[0.40,4.6],[0.75,6.8],[1,6.2]],
+        [[0,4.3],[0.50,4.0],[0.80,3.2],[1,3.4]],
+        [[0,5.9],[0.45,4.8],[0.78,2.1],[1,5.3]],
+        [[0,6.0],[0.40,4.4],[0.70,3.7],[1,2.0]],
+        [[0,5.6],[0.35,4.0],[0.65,3.4],[1,5.8]],
+        [[0,3.7],[0.30,4.0],[0.55,2.1],[1,3.6]],
+        [[0,4.7],[0.25,4.6],[0.52,3.0],[1,2.5]],
       ]
     },
+    castMask: {
+  "allowedPolys": [
+    [
+      [
+        0.693,
+        0.559
+      ],
+      [
+        0.995,
+        0.598
+      ],
+      [
+        0.996,
+        0.818
+      ],
+      [
+        0.508,
+        0.847
+      ],
+      [
+        0.097,
+        0.618
+      ],
+      [
+        0.376,
+        0.546
+      ],
+      [
+        0.62,
+        0.555
+      ]
+    ]
+  ],
+  "blockedPolys": []
+}
   },
   {
     id: 'sea',

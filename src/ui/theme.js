@@ -9,13 +9,12 @@ export const UI = {
 
   z: {
     bg: 11100,
-    world: 0,
-    bobber: 5,
-    // низ
+    world: 0,           // всё «игровое» (поплавок и т.п.)
+    // ui-низ
     slots: 700,
     bars: 705,
     bottomHudBg: 704,
-    // верх
+    // ui-верх
     levelBadge: 940,
     keepnet: 950,
     wallet: 952,

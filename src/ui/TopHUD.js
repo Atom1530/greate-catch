@@ -2,7 +2,7 @@
 import UI from './theme.js';
 import { KeepnetBadge } from './KeepnetBadge.js';
 import { ClockHUD } from './ClockHUD.js';
-import { LevelBadge } from './LevelBadge.js';
+import { PlayerCard } from './PlayerCard.js';
 import { DepthSonar } from './DepthSonar.js';
 import { DepthCtrl } from './DepthCtrl.js';
 import ActionDock from './ActionDock.js';
@@ -16,21 +16,27 @@ export class TopHUD {
     this.levelOffsetY = opts.levelOffsetY ?? 0;
 
     this.getSlotsTop   = opts.getSlotsTop || null;
-    this.onDepthChange = opts.onDepthChange || null;
-    this.sonarCorner   = opts.sonarCorner || 'left';
-    this.rigDepthM     = (typeof opts.rigDepthM === 'number') ? opts.rigDepthM : 1.2;
+this.sonarCorner   = opts.sonarCorner || 'left';
+this.rigDepthM     = (typeof opts.rigDepthM === 'number') ? opts.rigDepthM : 1.2;
 
-    // слева
-    this.level  = new LevelBadge(scene, opts.progress);
+this.sonarOffsetY  = opts.sonarOffsetY ?? 12;                // +вниз, -вверх
+this.sonarOffsetX  = (opts.sonarOffsetX ?? 14) | 0;
 
-    // центр
-    this.clock  = new ClockHUD(scene, opts.timeCycle, {
+    // слева — карточка игрока
+    this.playerCard = new PlayerCard(scene, {
+      progress: opts.progress,
+      user:     opts.user,
+      onOpen:   () => opts.onOpenProfile?.()
+    });
+
+    // центр — часы
+    this.clock = new ClockHUD(scene, opts.timeCycle, {
       ringR: UI.rem(scene, 12),
       ringTh: Math.max(2, Math.round(UI.rem(scene, 4))),
       depth: (UI.z.wallet ?? 940) - 1
     });
 
-    // справа (садок)
+    // справа — садок
     this.keepnet = new KeepnetBadge(scene, opts.keepnetCapacity ?? 25, opts.onKeepnetClick);
 
     // комбодок (база/локации/кошелёк/перки)
@@ -41,8 +47,7 @@ export class TopHUD {
       showPerks: true
     });
 
-
-    // Мини-карточка активного квеста (клик открывает модалку)
+    // активный квест
     this.activeQuest = new ActiveQuestHUD(scene, {
       width: 230,
       onOpen: () => openQuestsModal(scene)
@@ -82,6 +87,7 @@ export class TopHUD {
   update(){
     this.clock.update();
     this.activeQuest?.update();
+    this.playerCard?.update();
   }
 
   layout(){
@@ -89,7 +95,7 @@ export class TopHUD {
     const gap = UI.rem(this.s, UI.layout.top.gap);
     const m   = gap;
 
-    // размеры часов (нужны для второго ряда)
+    // размеры часов (нужны для второй строки)
     this.clock.update(true);
     const ckB = this.clock.getBounds?.() ?? new Phaser.Geom.Rectangle(0,0,180,40);
 
@@ -133,58 +139,129 @@ export class TopHUD {
     const avail     = Math.max(0, rightEdge - leftEdge);
 
     if (avail >= aqMinW) {
-      // помещаем между доком и садком
       const useW = Math.min(aqMaxW, avail);
       this.activeQuest.setWidth(useW);
-      const aqY = Math.round(row1Y - this.activeQuest.h/2);
+      const aqY = Math.round(row1Y - (this.activeQuest.h ?? 36)/2);
       this.activeQuest.setPosition(leftEdge, aqY).setVisible(true);
     } else {
-      // мало места — переносим под садок
       const underGap = Math.round(gap * 0.75);
       const useW = Math.min(aqMaxW, Math.max(aqMinW, knW - gap));
       this.activeQuest.setWidth(useW);
       const centerX = knX + Math.round((knW - useW) / 2);
-      const aqY = row1Y + Math.ceil(knH/2) + underGap + Math.round(this.activeQuest.h/2);
+      const aqY = row1Y + Math.ceil(knH/2) + underGap + Math.round((this.activeQuest.h ?? 36)/2);
       this.activeQuest.setPosition(centerX, aqY).setVisible(true);
     }
 
-    // ===== ROW 2: Clock (центр) + Level (слева) =====
-    const vgap   = Math.round(gap * 0.75);
-    const row2Y  = row1Y + Math.ceil(dockH/2) + vgap + Math.round(ckB.height/2);
+    // ===== ROW 2: Clock (центр) + PlayerCard (слева) =====
+    const vgap  = Math.round(gap * 0.75);
+    const row2Y = row1Y + Math.ceil(dockH/2) + vgap + Math.round(ckB.height/2);
+
 
     // часы строго по центру
     this.clock.setPosition(Math.round(W/2), row2Y);
 
-    // левый бейдж уровня — по второй строке
-    const lvlY = Math.max(2, m + this.levelOffsetY);
-    this.level.setPosition?.(m, lvlY);
+    // карточка игрока — слева
+    const cardY = Math.max(2, m + this.levelOffsetY);
+    this.playerCard.setPosition?.(m, cardY);
 
     // Сонар — к линии слотов
     this.placeSonar(m, W);
   }
+// Внутри класса TopHUD
+_placeBanner() {
+  if (!this._banner) return;
+  const ck = this.clock?.getBounds?.()
+    || new Phaser.Geom.Rectangle(Math.round(this.s.scale.width/2)-90, 10, 180, 40);
 
-  placeSonar(m, W){
-    if (!this.sonar?.setPosition) return;
+  const centerX = Math.round(ck.centerX);
+  const y = Math.round(ck.bottom + 6); // под часами
+  const gap = 6;
 
-    const baselineY = (typeof this.getSlotsTop === 'function')
-      ? (this.getSlotsTop() ?? Math.round(this.s.scale.height * 0.72))
-      : Math.round(this.s.scale.height * 0.72);
+  const { g, t1, t2 } = this._banner;
+  const totalW = t1.width + gap + t2.width;
+  const startX = centerX - Math.round(totalW / 2);
 
-    const raise  = UI.rem(this.s, UI.layout.sonar.raiseRem);
-    const sonarY = Math.round(baselineY - raise);
+  t1.setPosition(startX, y);
+  t2.setPosition(startX + t1.width + gap, y);
+  g.setScrollFactor(0).setDepth((UI.z.wallet ?? 940) + 50);
+}
 
-    const sizeW   = UI.layout.sonar.size?.w ?? 240;
-    const xLeft   = UI.layout.sonar.anchorX|0;
-    const xRight  = Math.max(m, W - sizeW - m);
-    const x       = (this.sonarCorner === 'right') ? xRight : xLeft;
+placeSonar(m, W){
+  if (!this.sonar?.setPosition) return;
 
-    this.sonar.setPosition(x, sonarY);
+  const baselineY = (typeof this.getSlotsTop === 'function')
+    ? (this.getSlotsTop() ?? Math.round(this.s.scale.height * 0.72))
+    : Math.round(this.s.scale.height * 0.72);
+
+  const raise  = UI.rem(this.s, UI.layout.sonar.raiseRem);
+  const sonarY = Math.round(baselineY - raise + (this.sonarOffsetY|0));
+
+  const sizeW  = UI.layout.sonar.size?.w ?? 240;
+  const xLeft  = UI.layout.sonar.anchorX|0;           // «левое» базовое положение
+  const xRight = Math.max(m, W - sizeW - m);          // «правое» базовое (левый край виджета)
+
+  const extraX = this.sonarOffsetX|0;
+
+  let x = (this.sonarCorner === 'right')
+    ? Math.min(W - sizeW - m, xRight + extraX)        // справа двигаем вправо (+), но клампим
+    : Math.max(m,                 xLeft  - extraX);   // слева двигаем влево  (+extraX => левее)
+
+  this.sonar.setPosition(x, Math.round(sonarY));
+}
+
+// Мини-баннер (только текст) под часами
+showShareText(prefix, highlight, opts = {}) {
+  const s = this.s;
+  const duration = opts.duration ?? 5000;
+  const fontSize = String(opts.fontSize ?? 14) + 'px';
+
+  // прибери прошлый баннер
+  if (this._banner) {
+    try { this._banner.tween?.stop(); } catch {}
+    this._banner.g?.destroy();
+    this._banner = null;
   }
 
-  destroy(){
-    this.s.scale.off('resize', this.layout);
-    this.activeQuest?.destroy();
-  }
+  const g  = s.add.container(0, 0);
+  const t1 = s.add.text(0, 0, String(prefix || ''), {
+    fontFamily: 'Arial, sans-serif', fontSize, color: '#ffeb3b'
+  }).setOrigin(0, 0.5).setAlpha(0).setShadow(1, 1, '#000', 2);
+
+  const t2 = s.add.text(0, 0, String(highlight || ''), {
+    fontFamily: 'Arial, sans-serif', fontSize, color: '#ff5252'
+  }).setOrigin(0, 0.5).setAlpha(0).setShadow(1, 1, '#000', 2);
+
+  g.add([t1, t2]);
+  this._banner = { g, t1, t2 };
+
+  this._placeBanner();
+
+  // плавный показ → держим → затухаем
+  s.tweens.add({ targets: [t1, t2], duration: 140, alpha: 1 });
+  const tween = s.tweens.add({
+    targets: g, delay: duration, duration: 250, alpha: 0,
+    onComplete: () => { g.destroy(); this._banner = null; }
+  });
+  this._banner.tween = tween;
+}
+
+// совместимость: оставляем старые имена-обёртки
+showShareBanner(title, accent, ms) { this.showShareText(title, accent, { duration: ms }); }
+showAlert(prefixText, highlightText, opts = {}) { this.showShareText(prefixText, highlightText, opts); }
+
+
+
+
+
+destroy(){
+  this.s.scale.off('resize', this.layout);
+  try { this._banner?.tween?.stop(); } catch {}
+  this._banner?.g?.destroy?.();
+  this._banner = null;
+
+  this.activeQuest?.destroy();
+  this.playerCard?.destroy();
+}
 }
 
 export default TopHUD;

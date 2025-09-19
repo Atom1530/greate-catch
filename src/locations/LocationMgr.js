@@ -1,6 +1,6 @@
 // src/locations/LocationMgr.js
 import { LOCATIONS } from '../data/locations.js';
-// import { WaterWavePipeline } from '../effects/WaterWavePipeline.js';
+import { WaterWavePipeline } from '../effects/WaterWavePipeline.js';
 
 export class LocationMgr {
   constructor(scene, initialId = 'lake') {
@@ -39,25 +39,44 @@ export class LocationMgr {
 
   // ---------------- assets ----------------
   // Грузим ТОЛЬКО day & night (с умными фолбэками).
-  static loadAssets(scene) {
-    for (const loc of LOCATIONS) {
-      const S = loc.bgSet || {};
-      const dayKey   = (S.day?.key)   || loc.bgDay?.key   || loc.bg?.key;
-      const dayUrl   = (S.day?.url)   || loc.bgDay?.url   || loc.bg?.url;
-      const nightKey = (S.night?.key) || loc.bgNight?.key || dayKey;
-      const nightUrl = (S.night?.url) || loc.bgNight?.url || dayUrl;
+// ---------------- assets ----------------
+static loadAssets(scene, locId = null) {
+  const list = locId
+    ? [LOCATIONS.find(l => l.id === locId)].filter(Boolean)
+    : LOCATIONS;
 
-      if (dayKey && dayUrl)     scene.load.image(dayKey, dayUrl);
-      if (nightKey && nightUrl) scene.load.image(nightKey, nightUrl);
-    }
-    scene.load.on(Phaser.Loader.Events.LOAD_ERROR, (file) =>
-      console.warn('LOAD_ERROR:', file.key, file.src)
-    );
+  const queued = new Set();
+  const add = (key, url) => {
+    if (!key || !url) return;
+    if (queued.has(key)) return;
+    // если уже есть в TextureManager – не ставим снова
+    if (scene.textures?.exists?.(key)) return;
+    queued.add(key);
+    scene.load.image(key, url);
+  };
+
+  for (const loc of list) {
+    const S = loc.bgSet || {};
+
+    const dayKey = S.day?.key || loc.bgDay?.key || loc.bg?.key;
+    const dayUrl = S.day?.url || loc.bgDay?.url || loc.bg?.url;
+    add(dayKey, dayUrl); // день всегда
+
+    // НОЧЬ: только если у неё есть СОБСТВЕННЫЙ url
+    const nightKeyOwn = S.night?.key || loc.bgNight?.key;
+    const nightUrlOwn = S.night?.url || loc.bgNight?.url;
+    if (nightKeyOwn && nightUrlOwn) add(nightKeyOwn, nightUrlOwn);
   }
+
+  scene.load.on(Phaser.Loader.Events.LOAD_ERROR, (file) =>
+    console.warn('LOAD_ERROR:', file?.key, file?.src)
+  );
+}
+
 
   // ---------------- background ----------------
   applyBackground() {
-    const { width: W, height: H } = this.s.scale;
+ const { width: W, height: H } = this.s.scale;
 
     // cleanup
     this.bg?.destroy(); this.bg = null;
@@ -66,41 +85,51 @@ export class LocationMgr {
     this.bgLayers = {};
     this.bgWaterLayers = {};
 
-    const loc = this.data || {};
-    const S = loc.bgSet || {};
-    const dayKey   = (S.day?.key)   || loc.bgDay?.key   || loc.bg?.key   || null;
-    const nightKey = (S.night?.key) || loc.bgNight?.key || dayKey        || null;
-    if (!dayKey && !nightKey) return;
+  this.bgLayers = {}; this.bgWaterLayers = {};
 
-    const baseDepth = -300;
+  const loc = this.data || {};
+  const S = loc.bgSet || {};
+  const dayKeyBase   = S.day?.key   || loc.bgDay?.key   || loc.bg?.key || null;
+  let   nightKeyBase = S.night?.key || loc.bgNight?.key || null;
 
-    // base
-    if (dayKey) {
-      const imgDay = this.s.add.image(W/2, H/2, dayKey)
-        .setOrigin(0.5).setDepth(baseDepth + 1).setScrollFactor(0).setAlpha(0);
-      this._fitCover(imgDay); this.bgLayers.day = imgDay;
-    }
-    if (nightKey) {
-      const imgNight = this.s.add.image(W/2, H/2, nightKey)
-        .setOrigin(0.5).setDepth(baseDepth + 1).setScrollFactor(0).setAlpha(0);
-      this._fitCover(imgNight); this.bgLayers.night = imgNight;
-    }
+  // если ночь не загружена – используем день
+  const hasDay   = dayKeyBase   && this.s.textures.exists(dayKeyBase);
+  const hasNight = nightKeyBase && this.s.textures.exists(nightKeyBase);
+  const dayKey   = hasDay   ? dayKeyBase   : null;
+  const nightKey = hasNight ? nightKeyBase : dayKeyBase; // ← фолбэк на day
 
-    // water (под шейдер/маску)
-    if (dayKey) {
-      const imgDayW = this.s.add.image(W/2, H/2, dayKey)
-        .setOrigin(0.5).setDepth(baseDepth + 1.5).setScrollFactor(0).setAlpha(0);
-      this._fitCover(imgDayW); this.bgWaterLayers.day = imgDayW;
-    }
-    if (nightKey) {
-      const imgNightW = this.s.add.image(W/2, H/2, nightKey)
-        .setOrigin(0.5).setDepth(baseDepth + 1.5).setScrollFactor(0).setAlpha(0);
-      this._fitCover(imgNightW); this.bgWaterLayers.night = imgNightW;
-    }
+  if (!dayKey && !nightKey) return;
 
-    // по умолчанию показываем day, иначе night
-    (this.bgLayers.day || this.bgLayers.night)?.setAlpha(1);
-    (this.bgWaterLayers.day || this.bgWaterLayers.night)?.setAlpha(1);
+  const baseDepth = -300;
+
+  // base
+  if (dayKey) {
+    const imgDay = this.s.add.image(W/2, H/2, dayKey)
+      .setOrigin(0.5).setDepth(baseDepth + 1).setScrollFactor(0).setAlpha(0);
+    this._fitCover(imgDay); this.bgLayers.day = imgDay;
+  }
+  if (nightKey) {
+    const imgNight = this.s.add.image(W/2, H/2, nightKey)
+      .setOrigin(0.5).setDepth(baseDepth + 1).setScrollFactor(0).setAlpha(0);
+    this._fitCover(imgNight); this.bgLayers.night = imgNight;
+  }
+
+  // water слои – аналогично
+  if (dayKey) {
+    const imgDayW = this.s.add.image(W/2, H/2, dayKey)
+      .setOrigin(0.5).setDepth(baseDepth + 1.5).setScrollFactor(0).setAlpha(0);
+    this._fitCover(imgDayW); this.bgWaterLayers.day = imgDayW;
+  }
+  if (nightKey) {
+    const imgNightW = this.s.add.image(W/2, H/2, nightKey)
+      .setOrigin(0.5).setDepth(baseDepth + 1.5).setScrollFactor(0).setAlpha(0);
+    this._fitCover(imgNightW); this.bgWaterLayers.night = imgNightW;
+  }
+
+  // показать хотя бы один слой
+  (this.bgLayers.day || this.bgLayers.night)?.setAlpha(1);
+  (this.bgWaterLayers.day || this.bgWaterLayers.night)?.setAlpha(1);
+
 
     // пост-слои
     this._veil?.destroy();
@@ -146,6 +175,18 @@ export class LocationMgr {
   this.s.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
     this._bgTimer?.remove(); this._bgTimer = null;
   });
+}
+// --- (ре)включаем водные FX после готовности слоёв ---
+this.disableWaterFX(); // почистим старый пайплайн/листенеры, если были
+if (this._waterFxEnabled) {
+this.enableWaterFX({
+  mode: 1,             // только полосы
+  stripeCount: 1,     // сколько «ребер»
+  stripeAmp: 1.0,      // амплитуда (px)
+  stripeSpeed: 1.0,    // скорость «захлоп/расхлоп»
+  amp: 0               // базовую волну выключили
+});
+
 }
 
     }
@@ -221,38 +262,65 @@ export class LocationMgr {
   }
 
   // ---------------- shaders & mask ----------------
-  enableWaterFX(opts = {}) {
-    if (!this._waterFxEnabled) return;
-    if (this.s.sys.game.config.renderType !== Phaser.WEBGL) return;
-
-    const pm = this.s.game.renderer?.pipelines; if (!pm) return;
-    let pipe = (typeof pm.get === 'function') ? pm.get('WaterWave') : null;
-    // if (!pipe && typeof pm.add === 'function') {
-    //   pm.add('WaterWave', new WaterWavePipeline(this.s.game));
-    //   pipe = pm.get('WaterWave');
-    // }
-    if (!pipe) return;
-    this._waterPipeline = pipe;
-
-    const { width: W, height: H } = this.s.scale;
-    const { amp=2.0, waveLen=56.0, speed=22.0 } = opts;
-    this._setU(2, 'uResolution', W, H);
-    this._setU(1, 'uAmp', amp);
-    this._setU(1, 'uWaveLen', waveLen);
-    this._setU(1, 'uSpeed', speed);
-    this._setU(1, 'uTime', 0);
-
-    const targets = this.bgWaterLayers ? Object.values(this.bgWaterLayers) : [];
-    targets.forEach(go => go?.setPipeline && go.setPipeline('WaterWave'));
-
-    if (!this._boundUpdate) {
-      this._boundUpdate = (_t, dt) => {
-        this._waterTime += (dt || 0) / 1000;
-        this._setU(1, 'uTime', this._waterTime);
-      };
-      this.s.events.on('update', this._boundUpdate);
-    }
+enableWaterFX(opts = {}) {
+  if (!this._waterFxEnabled) return;
+  if (this.s.sys.game.config.renderType !== Phaser.WEBGL) {
+    console.warn('[WaterFX] Canvas renderer: шейдеры недоступны');
+    return;
   }
+
+  const pm = this.s.game.renderer?.pipelines;
+  if (!pm) return;
+
+  let pipe = (typeof pm.get === 'function') ? pm.get('WaterWave') : null;
+  if (!pipe && typeof pm.add === 'function') {
+    pm.add('WaterWave', new WaterWavePipeline(this.s.game));
+    pipe = pm.get('WaterWave');
+  }
+  if (!pipe) { console.warn('[WaterFX] Не удалось создать pipeline'); return; }
+  this._waterPipeline = pipe;
+
+  const { width: W, height: H } = this.s.scale;
+
+  // ВОЛНА (можно оставить amp=0, чтобы выключить)
+  const amp     = (opts.amp     != null) ? opts.amp     : 0;            // по умолчанию отключаем волну
+  const waveLen = (opts.waveLen != null) ? opts.waveLen : this._fxWaveLen();
+  const speed   = (opts.speed   != null) ? opts.speed   : this._fxSpeed();
+
+  // ПОЛОСЫ
+  const stripeCount = (opts.stripeCount != null) ? opts.stripeCount : 30;
+  const stripeAmp   = (opts.stripeAmp   != null) ? opts.stripeAmp   : 2.0;
+  const stripeSpeed = (opts.stripeSpeed != null) ? opts.stripeSpeed : 2.0; // «дыхание» 2 рад/сек
+  const mode        = (opts.mode != null) ? opts.mode : 1; // 0=wave, 1=stripes, 2=both
+
+  this._setU(2, 'uResolution', W, H);
+  this._setU(1, 'uAmp', amp);
+  this._setU(1, 'uWaveLen', waveLen);
+  this._setU(1, 'uSpeed', speed);
+  this._setU(1, 'uTime', this._waterTime = 0);
+
+  // новые униформы
+  this._setU(1, 'uStripeCount', stripeCount);
+  this._setU(1, 'uStripeAmp',   stripeAmp);
+  this._setU(1, 'uStripeSpeed', stripeSpeed);
+  this._setU(1, 'uMode',        mode);
+
+  // навешиваем pipeline на water-слои (если вдруг слоёв ещё нет — подождём applyBackground)
+  const targets = Object.values(this.bgWaterLayers || {});
+  if (targets.length === 0) {
+    console.warn('[WaterFX] Нет water-слоёв. Вызови applyBackground() прежде.');
+  }
+  targets.forEach(go => go?.setPipeline?.('WaterWave'));
+
+  if (!this._boundUpdate) {
+    this._boundUpdate = (_t, dt) => {
+      this._waterTime += (dt || 0) / 1000;
+      this._setU(1, 'uTime', this._waterTime);
+    };
+    this.s.events.on('update', this._boundUpdate);
+  }
+}
+
   disableWaterFX() {
     if (!this._waterPipeline) return;
     const targets = this.bgWaterLayers ? Object.values(this.bgWaterLayers) : [];
@@ -646,6 +714,32 @@ getCastDistanceRatio(y) {
     const { top, shore } = this._waterBounds();
     return { top, bottom: shore };
   }
+setWaterFxEnabled(on = true){
+  this._waterFxEnabled = !!on;
+  if (on) this.enableWaterFX({ amp: this._fxAmp(), waveLen: this._fxWaveLen(), speed: this._fxSpeed() });
+  else    this.disableWaterFX();
+}
+
+// заметные, но мягкие значения по экрану
+_fxAmp(){   // амплитуда в пикселях
+  const H = this.s.scale.height;
+  return Math.max(2, Math.round(H * 0.004)); // ~3–6px на типичных высотах
+}
+_fxWaveLen(){
+  const H = this.s.scale.height;
+  return Math.max(48, Math.round(H * 0.07)); // длина волны
+}
+_fxSpeed(){ return 24; } // px/сек
+
+// быстро понять, «жив» ли FX
+debugWaterFXStatus(){
+  return {
+    webgl: this.s.sys.game.config.renderType === Phaser.WEBGL,
+    pipelineReady: !!this._waterPipeline,
+    timeHook: !!this._boundUpdate,
+    targets: Object.values(this.bgWaterLayers || {}).length
+  };
+}
 
   
 }
